@@ -1765,91 +1765,40 @@ let towerCounter = 0;
 </script>
   <script type="module">
   // Generate a PDF from a report container
-async function generateReportPDF({ reportSelector = ".report-page", filename = "report.pdf" } = {}) {
- const src = document.querySelector(`#${reportSelector} .report-page`) || document.querySelector(reportSelector);
+async function generateReportPDF(viewId, filename) {
+  const view = document.getElementById(viewId);
+  if (!view) throw new Error(`generateReportPDF: Can't find #${viewId}`);
 
-  if (!src) throw new Error(`generateReportPDF: Can't find ${reportSelector}`);
+  // Prefer a report page wrapper if it exists
+  const target = view.querySelector(".report-page") || view;
 
-  // ---- 1) Build a visible "print sandbox" clone ----
-  const sandbox = document.createElement("div");
-  sandbox.id = "pdf-sandbox";
-  sandbox.style.position = "fixed";
-  sandbox.style.left = "0";
-  sandbox.style.top = "0";
-  sandbox.style.width = "100vw";
-  sandbox.style.height = "100vh";
-  sandbox.style.overflow = "auto";
-  sandbox.style.background = "#fff";
-  sandbox.style.zIndex = "999999";
-  sandbox.style.padding = "24px";
-
-  // Clone ONLY the report page content
-  const clone = src.cloneNode(true);
-
-  // Force clone to be visible & "print friendly"
-  clone.style.display = "block";
-  clone.style.visibility = "visible";
-  clone.style.opacity = "1";
-  clone.style.position = "relative";
-  clone.style.transform = "none";
-  clone.style.overflow = "visible";
-  clone.style.background = "#fff";
-
-  sandbox.appendChild(clone);
-  document.body.appendChild(sandbox);
-
-  // ---- 2) Wait for fonts + images to be ready (prevents blanks) ----
-  try {
-    if (document.fonts && document.fonts.ready) await document.fonts.ready;
-  } catch (_) {}
-
-  // Wait for any images inside the clone
-  const imgs = Array.from(clone.querySelectorAll("img"));
-  await Promise.all(
-    imgs.map((img) => {
-      if (img.complete) return Promise.resolve();
-      return new Promise((res) => {
-        img.onload = () => res();
-        img.onerror = () => res();
-      });
-    })
-  );
-
-  // ---- 3) Render from the CLONE (not the hidden UI) ----
-  const opt = {
-    margin: 0.25,
-    filename,
-    image: { type: "jpeg", quality: 0.98 },
-    html2canvas: {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      backgroundColor: "#ffffff",
-      logging: false,
-      scrollX: 0,
-      scrollY: 0,
-      windowWidth: clone.scrollWidth,
-      windowHeight: clone.scrollHeight
-    },
-    jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
+  // Force visibility for capture (minimal)
+  const prev = {
+    display: view.style.display,
+    visibility: view.style.visibility,
+    opacity: view.style.opacity
   };
+  view.style.display = "block";
+  view.style.visibility = "visible";
+  view.style.opacity = "1";
 
   try {
-    await html2pdf().set(opt).from(clone).save();
+    await html2pdf().set({
+      margin: 0.25,
+      filename: filename || "report.pdf",
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+      jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
+    }).from(target).save();
   } finally {
-    // ---- 4) Cleanup ----
-    sandbox.remove();
+    // restore styles
+    view.style.display = prev.display;
+    view.style.visibility = prev.visibility;
+    view.style.opacity = prev.opacity;
   }
 }
-window.generate
+window.generateReportPDF = generateReportPDF;
 
-
-  // Manual test helpers (for now)
-  window.generateTechPDF = () =>
-    generateReportPDF("techReportView", "tech-report.pdf");
-
-  window.generateCustomerPDF = () =>
-    generateReportPDF("customerReportView", "customer-report.pdf");
     window.generateReportPDF = generateReportPDF;
 </script>
 
