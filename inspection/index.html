@@ -1840,7 +1840,7 @@ async function generateReportPDF({ reportSelector = ".report-page", filename = "
     sandbox.remove();
   }
 }
-
+window.generate
 
 
   // Manual test helpers (for now)
@@ -1849,6 +1849,7 @@ async function generateReportPDF({ reportSelector = ".report-page", filename = "
 
   window.generateCustomerPDF = () =>
     generateReportPDF("customerReportView", "customer-report.pdf");
+    window.generateReportPDF = generateReportPDF;
 </script>
 
 </body>
