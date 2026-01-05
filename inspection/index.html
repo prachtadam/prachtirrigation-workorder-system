@@ -1766,7 +1766,9 @@ let towerCounter = 0;
   <script type="module">
   // Generate a PDF from a report container
 async function generateReportPDF(containerId, filename) {
-  const el = document.getElementById(containerId);
+  const wrapper = document.getElementById(containerId);
+const el = wrapper ? wrapper.querySelector(".report-page") : null;
+
   if (!el) {
     alert("Report container not found: " + containerId);
     return;
