@@ -1774,15 +1774,20 @@ const el = wrapper ? wrapper.querySelector(".report-page") : null;
     return;
   }
 
-  const prevDisplay = el.style.display;
-  const prevVisibility = el.style.visibility;
+  const prevWrapDisplay = wrapper.style.display;
+  const prevWrapVisibility = wrapper.style.visibility;
+  const prevElDisplay = el.style.display;
+  const prevElVisibility = el.style.visibility;
 
-  // Force visible for export
+  // Force wrapper + page visible for export
+  wrapper.style.display = "block";
+  wrapper.style.visibility = "visible";
   el.style.display = "block";
   el.style.visibility = "visible";
 
   // Let browser render it
-  await new Promise(r => setTimeout(r, 50));
+  await new Promise(r => setTimeout(r, 100));
+
 
   const opt = {
     margin: 0.5,
@@ -1795,9 +1800,11 @@ const el = wrapper ? wrapper.querySelector(".report-page") : null;
   try {
     await html2pdf().from(el).set(opt).save();
   } finally {
-    // Restore original state
-    el.style.display = prevDisplay;
-    el.style.visibility = prevVisibility;
+        wrapper.style.display = prevWrapDisplay;
+    wrapper.style.visibility = prevWrapVisibility;
+    el.style.display = prevElDisplay;
+    el.style.visibility = prevElVisibility;
+
   }
 }
 
