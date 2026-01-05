@@ -738,29 +738,11 @@
 
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
- <script type="module">
+<script type="module">
   import { supabase } from "../shared/supabase.js";
-
   console.log("Supabase connected:", supabase);
-
-  // DEV TEST: write + read one row
-  (async () => {
-    const payload = {
-      org_id: "pracht",
-      name: "TEST PRODUCT - DELETE ME",
-      sku: "TEST-" + Date.now(),
-      unit: "ea",
-      category: "dev",
-      active: true
-    };
-
-    const ins = await supabase.from("products").insert(payload).select().single();
-    console.log("Insert result:", ins);
-
-    const sel = await supabase.from("products").select("product_id, sku, name").order("created_at", { ascending: false }).limit(5);
-    console.log("Latest products:", sel);
-  })();
 </script>
+
 
 
 </head>
