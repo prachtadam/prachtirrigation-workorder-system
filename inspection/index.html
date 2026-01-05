@@ -1771,6 +1771,14 @@ async function generateReportPDF(viewId, filename) {
 
   // Prefer a report page wrapper if it exists
   const target = view.querySelector(".report-page") || view;
+  // temporarily neutralize modal/transform issues
+const prevTarget = {
+  position: target.style.position,
+  transform: target.style.transform
+};
+target.style.position = "relative";
+target.style.transform = "none";
+
 
   // Force visibility for capture (minimal)
   const prev = {
@@ -1791,10 +1799,18 @@ async function generateReportPDF(viewId, filename) {
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
     }).from(target).save();
   } finally {
-    // restore styles
+   } finally {
+    // restore view styles
     view.style.display = prev.display;
     view.style.visibility = prev.visibility;
     view.style.opacity = prev.opacity;
+
+    // restore target styles
+    target.style.position = prevTarget.position;
+    target.style.transform = prevTarget.transform;
+  }
+
+
   }
 }
 window.generateReportPDF = generateReportPDF;
