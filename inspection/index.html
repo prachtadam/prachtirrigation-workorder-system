@@ -1857,33 +1857,37 @@ let towerCounter = 0;
 
    
 </script>
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
   <script type="module">
   // Generate a PDF from a report container
-async function generateReportPDF(viewId, filename) {
-  const view = document.getElementById(viewId);
-  if (!view) {
-    console.error("Report view not found:", viewId);
-    return;
+async function generateReportPDF(type = "customer") {
+  const data = gatherFormData();
+
+  let pdfBytes;
+  let filename;
+
+  if (type === "tech") {
+    pdfBytes = await buildTechPdfBytes(data);
+    filename = "inspection-tech-report.pdf";
+  } else {
+    pdfBytes = await buildCustomerPdfBytes(data);
+    filename = "inspection-customer-report.pdf";
   }
 
-  const target = view.querySelector(".report-page") || view;
+  // FOR NOW: download (we’ll swap this for Supabase upload next)
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
 
-  try {
-    await html2pdf().set({
-      margin: 0.25,
-      filename: filename || "report.pdf",
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff"
-      },
-      jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
-    }).from(target).save();
-  } catch (err) {
-    console.error("PDF error:", err);
-  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
 
 window.generateReportPDF = generateReportPDF;
 
