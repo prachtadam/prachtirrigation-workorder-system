@@ -1771,6 +1771,19 @@ async function generateReportPDF(viewId, filename) {
 
   // Prefer a report page wrapper if it exists
   const target = view.querySelector(".report-page") || view;
+    // clone into body for reliable capture (avoids modal/transform ancestors)
+  const clone = target.cloneNode(true);
+  clone.style.display = "block";
+  clone.style.visibility = "visible";
+  clone.style.opacity = "1";
+  clone.style.position = "fixed";
+  clone.style.left = "0";
+  clone.style.top = "0";
+  clone.style.width = "816px";   // ~8.5in at 96dpi
+  clone.style.background = "#fff";
+  clone.style.zIndex = "999999";
+  document.body.appendChild(clone);
+
   // temporarily neutralize modal/transform issues
 const prevTarget = {
   position: target.style.position,
@@ -1797,7 +1810,7 @@ target.style.transform = "none";
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
-    }).from(target).save();
+    }).from(clone).save();
   } finally {
    } finally {
     // restore view styles
@@ -1808,6 +1821,7 @@ target.style.transform = "none";
     // restore target styles
     target.style.position = prevTarget.position;
     target.style.transform = prevTarget.transform;
+    clone.remove();
   }
 
 
