@@ -722,11 +722,11 @@
 }
 .inlineRow .grow{flex:1;}
 
+.btn.unableBtn{padding:3px 6px; font-size:10px; line-height:1; border-radius:7px; height:auto;}
 /* === Repair used parts inline remove === */
 .partHeaderRow{display:flex; align-items:center; justify-content:space-between; gap:10px;}
 .partHeaderRight{display:flex; align-items:center; gap:8px;}
 .btn.microRemove{padding:3px 6px; font-size:10px; line-height:1; border-radius:7px; height:auto; white-space:nowrap;}
-.btn.unableBtn{padding:3px 6px; font-size:10px; line-height:1; border-radius:7px; height:auto;}
 
 /* Restock single-line numeric bubbles */
 .badge.success{
@@ -4089,6 +4089,11 @@ window.addEventListener('DOMContentLoaded', ()=>{ try{ wirePauseModal(); }catch(
       </div>
     </div>
   </div>
+<script type="module">
+  import { supabase } from "../shared/supabase.js";
+
+  console.log("Supabase connected:", supabase);
+</script>
 
 </body>
 </html>
