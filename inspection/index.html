@@ -1769,32 +1769,12 @@ let towerCounter = 0;
   // Generate a PDF from a report container
 async function generateReportPDF(viewId, filename) {
   const view = document.getElementById(viewId);
-  if (!view) throw new Error(`generateReportPDF: Can't find #${viewId}`);
+  if (!view) {
+    console.error("Report view not found:", viewId);
+    return;
+  }
 
   const target = view.querySelector(".report-page") || view;
-
-  // Clone into body to avoid modal / transform issues
-  const clone = target.cloneNode(true);
-  clone.style.display = "block";
-  clone.style.visibility = "visible";
-  clone.style.opacity = "1";
-  clone.style.position = "fixed";
-  clone.style.left = "0";
-  clone.style.top = "0";
-  clone.style.width = "816px"; // ~8.5in @96dpi
-  clone.style.background = "#fff";
-  clone.style.zIndex = "999999";
-  document.body.appendChild(clone);
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-  const imgs = Array.from(clone.querySelectorAll("img"));
-await Promise.all(imgs.map(img => {
-  if (img.complete) return Promise.resolve();
-  return new Promise(res => {
-    img.onload = () => res();
-    img.onerror = () => res();
-  });
-}));
-
 
   try {
     await html2pdf().set({
@@ -1802,27 +1782,19 @@ await Promise.all(imgs.map(img => {
       filename: filename || "report.pdf",
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: {
-  scale: 2,
-  useCORS: true,
-  allowTaint: true,
-  backgroundColor: "#ffffff",
-  scrollX: 0,
-  scrollY: 0,
-  windowWidth: clone.scrollWidth,
-  windowHeight: clone.scrollHeight
-},
-
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff"
       },
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
-    }).from(clone).save();
- } finally {
-  setTimeout(function () {
-    clone.remove();
-  }, 2000);
+    }).from(target).save();
+  } catch (err) {
+    console.error("PDF error:", err);
+  }
 }
 
-
 window.generateReportPDF = generateReportPDF;
+
     
 </script>
 
