@@ -1765,48 +1765,82 @@ let towerCounter = 0;
 </script>
   <script type="module">
   // Generate a PDF from a report container
-async function generateReportPDF(containerId, filename) {
-  const wrapper = document.getElementById(containerId);
-const el = wrapper ? wrapper.querySelector(".report-page") : null;
+async function generateReportPDF({ reportSelector = ".report-page", filename = "report.pdf" } = {}) {
+  const src = document.querySelector(reportSelector);
+  if (!src) throw new Error(`generateReportPDF: Can't find ${reportSelector}`);
 
-  if (!el) {
-    alert("Report container not found: " + containerId);
-    return;
-  }
+  // ---- 1) Build a visible "print sandbox" clone ----
+  const sandbox = document.createElement("div");
+  sandbox.id = "pdf-sandbox";
+  sandbox.style.position = "fixed";
+  sandbox.style.left = "0";
+  sandbox.style.top = "0";
+  sandbox.style.width = "100vw";
+  sandbox.style.height = "100vh";
+  sandbox.style.overflow = "auto";
+  sandbox.style.background = "#fff";
+  sandbox.style.zIndex = "999999";
+  sandbox.style.padding = "24px";
 
-  const prevWrapDisplay = wrapper.style.display;
-  const prevWrapVisibility = wrapper.style.visibility;
-  const prevElDisplay = el.style.display;
-  const prevElVisibility = el.style.visibility;
+  // Clone ONLY the report page content
+  const clone = src.cloneNode(true);
 
-  // Force wrapper + page visible for export
-  wrapper.style.display = "block";
-  wrapper.style.visibility = "visible";
-  el.style.display = "block";
-  el.style.visibility = "visible";
+  // Force clone to be visible & "print friendly"
+  clone.style.display = "block";
+  clone.style.visibility = "visible";
+  clone.style.opacity = "1";
+  clone.style.position = "relative";
+  clone.style.transform = "none";
+  clone.style.overflow = "visible";
+  clone.style.background = "#fff";
 
-  // Let browser render it
-  await new Promise(r => setTimeout(r, 100));
+  sandbox.appendChild(clone);
+  document.body.appendChild(sandbox);
 
+  // ---- 2) Wait for fonts + images to be ready (prevents blanks) ----
+  try {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  } catch (_) {}
 
+  // Wait for any images inside the clone
+  const imgs = Array.from(clone.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map((img) => {
+      if (img.complete) return Promise.resolve();
+      return new Promise((res) => {
+        img.onload = () => res();
+        img.onerror = () => res();
+      });
+    })
+  );
+
+  // ---- 3) Render from the CLONE (not the hidden UI) ----
   const opt = {
-    margin: 0.5,
+    margin: 0.25,
     filename,
     image: { type: "jpeg", quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: clone.scrollWidth,
+      windowHeight: clone.scrollHeight
+    },
     jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
   };
 
   try {
-    await html2pdf().from(el).set(opt).save();
+    await html2pdf().set(opt).from(clone).save();
   } finally {
-        wrapper.style.display = prevWrapDisplay;
-    wrapper.style.visibility = prevWrapVisibility;
-    el.style.display = prevElDisplay;
-    el.style.visibility = prevElVisibility;
-
+    // ---- 4) Cleanup ----
+    sandbox.remove();
   }
 }
+
 
 
   // Manual test helpers (for now)
