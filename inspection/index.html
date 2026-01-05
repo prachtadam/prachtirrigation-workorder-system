@@ -1815,10 +1815,12 @@ await Promise.all(imgs.map(img => {
       },
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
     }).from(clone).save();
-  } finally {
-    setTimeout(() => clone.remove(), 2000);
-  }
+ } finally {
+  setTimeout(function () {
+    clone.remove();
+  }, 2000);
 }
+
 
 window.generateReportPDF = generateReportPDF;
     
