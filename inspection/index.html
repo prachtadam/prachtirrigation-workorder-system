@@ -1766,7 +1766,8 @@ let towerCounter = 0;
   <script type="module">
   // Generate a PDF from a report container
 async function generateReportPDF({ reportSelector = ".report-page", filename = "report.pdf" } = {}) {
-  const src = document.querySelector(reportSelector);
+ const src = document.querySelector(`#${reportSelector} .report-page`) || document.querySelector(reportSelector);
+
   if (!src) throw new Error(`generateReportPDF: Can't find ${reportSelector}`);
 
   // ---- 1) Build a visible "print sandbox" clone ----
