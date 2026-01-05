@@ -579,11 +579,21 @@
       margin: 0 auto;
     }
 
-  </style>
+  
+    .btn-add-end-tower {
+      background: #6f42c1;
+      border: 1px solid #5a36a5;
+      color: #fff;
+    }
+    .btn-add-end-tower:hover { filter: brightness(0.95); }
+
+    .end-tower-only { display: none; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px dashed #ced4da; }
+    .end-tower-only label { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+
+</style>
   <script type="module" src="../shared/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 
-  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 </head>
 <body>
   <form id="inspectionForm">
@@ -790,7 +800,7 @@
 
         <!-- Tower-level condition buttons -->
         <div class="tower-conditions">
-          <div class="tower-cond-row">
+          <div class="tower-cond-row boot-row">
             <div class="tower-cond-label">Tower Boot</div>
             <div class="tower-cond-buttons" data-cond-type="boot">
               <button type="button" class="tower-cond-btn" data-status="good" data-value="Good">Good</button>
@@ -812,6 +822,7 @@
 
         <div class="tower-actions">
           <button type="button" class="btn-add-tower">+ Add Tower</button>
+          <button type="button" class="btn-add-end-tower">+ Add End Tower</button>
           <button type="button" class="btn-remove-tower">Remove Tower</button>
         </div>
       </div>
@@ -822,7 +833,15 @@
       <div class="component-card-header">
         <span id="cardTitle">Component</span>
         <button class="close-card-btn" id="closeCardBtn" aria-label="Close card">×</button>
-      </div>
+      
+          <div class="end-tower-only">
+            <label><input type="checkbox" class="chk-sandtrap" /> Cleaned Sand Trap</label>
+            <div class="tower-notes">
+              <label>Comments / Notes</label>
+              <textarea class="tower-comment end-tower-comment" rows="3" placeholder="End tower notes..."></textarea>
+            </div>
+          </div>
+</div>
       <div class="component-card-body">
         <div class="options-row" id="optionsRow"></div>
 
@@ -1158,12 +1177,25 @@ let towerCounter = 0;
       closeCard();
     });
 
-    function initTowerSection(sectionEl, towerId) {
-      sectionEl.dataset.towerId = String(towerId);
-      const numSpan = sectionEl.querySelector('.tower-number');
-      if (numSpan) numSpan.textContent = String(towerId);
+    function initTowerSection(sectionEl, towerId, isEndTower) {
+      // towerId is the normal tower index; end tower uses a fixed id
+      const effectiveId = isEndTower ? 'end_tower' : String(towerId);
+      sectionEl.dataset.towerId = effectiveId;
 
-      const canvasEl = sectionEl.querySelector('.tower-layout');
+      // Title & number (number refreshed later by refreshTowerLabels)
+      const titleEl = sectionEl.querySelector('.section-title');
+      if (titleEl) {
+        titleEl.innerHTML = isEndTower
+          ? 'End Tower Inspection – Tower <span class="tower-number">?</span>'
+          : 'Tower Inspection – Tower <span class="tower-number">?</span>';
+      }
+
+      // Toggle end-tower-only UI
+      const bootRow = sectionEl.querySelector('.boot-row');
+      if (bootRow) bootRow.style.display = isEndTower ? 'none' : '';
+      const endOnly = sectionEl.querySelector('.end-tower-only');
+      if (endOnly) endOnly.style.display = isEndTower ? 'block' : 'none';
+const canvasEl = sectionEl.querySelector('.tower-layout');
       const hotspots = canvasEl.querySelectorAll('.hotspot');
 
       hotspots.forEach(h => {
@@ -1207,11 +1239,18 @@ let towerCounter = 0;
 
 
       const addBtn = sectionEl.querySelector('.btn-add-tower');
+      const addEndBtn = sectionEl.querySelector('.btn-add-end-tower');
       const removeBtn = sectionEl.querySelector('.btn-remove-tower');
 
       addBtn.addEventListener('click', () => {
         addTower();
       });
+
+      if (addEndBtn) {
+        addEndBtn.addEventListener('click', () => {
+          addEndTower();
+        });
+      }
 
       removeBtn.addEventListener('click', () => {
         const sections = Array.from(
@@ -1222,9 +1261,11 @@ let towerCounter = 0;
           return;
         }
         // Clean up stored data for this tower
-        delete selections[towerId];
-        delete towerMeta[towerId];
+        delete selections[sectionEl.dataset.towerId];
+        delete towerMeta[sectionEl.dataset.towerId];
+        if (sectionEl.classList.contains('end-tower')) endTowerExists = false;
         sectionEl.remove();
+        refreshTowerLabels();
       });
     }
 
@@ -1232,12 +1273,53 @@ let towerCounter = 0;
       towerCounter += 1;
       const cloneFrag = towerTemplate.content.cloneNode(true);
       const section = cloneFrag.querySelector('.tower-section');
-      towersContainer.appendChild(section);
-      initTowerSection(section, towerCounter);
+
+      // If an end tower exists, always insert normal towers before it
+      const endSection = towersContainer.querySelector('.tower-section.end-tower');
+      if (endSection) towersContainer.insertBefore(section, endSection);
+      else towersContainer.appendChild(section);
+
+      initTowerSection(section, towerCounter, false);
+      refreshTowerLabels();
     }
 
-    // Initialize first tower
+    let endTowerExists = false;
+
+    function refreshTowerLabels() {
+      const sections = Array.from(towersContainer.querySelectorAll('.tower-section'));
+      const normal = sections.filter(s => !s.classList.contains('end-tower'));
+      normal.forEach((s, i) => {
+        const n = s.querySelector('.tower-number');
+        if (n) n.textContent = String(i + 1);
+        s.dataset.towerIndex = String(i + 1);
+      });
+
+      const end = sections.find(s => s.classList.contains('end-tower'));
+      if (end) {
+        const n = end.querySelector('.tower-number');
+        if (n) n.textContent = String(normal.length + 1);
+        end.dataset.towerIndex = String(normal.length + 1);
+      }
+
+      towerCounter = normal.length; // keep counter aligned
+      endTowerExists = !!end;
+    }
+
+    function addEndTower() {
+      if (endTowerExists) {
+        alert('End tower already added.');
+        return;
+      }
+      const cloneFrag = towerTemplate.content.cloneNode(true);
+      const section = cloneFrag.querySelector('.tower-section');
+      section.classList.add('end-tower');
+      towersContainer.appendChild(section);
+      initTowerSection(section, null, true);
+      refreshTowerLabels();
+    }
+// Initialize first tower
     addTower();
+    refreshTowerLabels();
 
     // ---------- GEOLOCATION ----------
 
@@ -1768,238 +1850,33 @@ let towerCounter = 0;
 </script>
   <script type="module">
   // Generate a PDF from a report container
-
-// ---------- PDF GENERATION (pdf-lib; no html2canvas) ----------
-async function buildCustomerPdfBytes(data) {
-  const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([612, 792]); // Letter: 8.5x11 @72dpi
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  const margin = 36;
-  let x = margin;
-  let y = 792 - margin;
-
-  const lineH = 14;
-  const maxW = 612 - margin*2;
-
-  function drawText(txt, opts={}) {
-    const {
-      size = 11,
-      bold = false,
-      color = rgb(0.1,0.1,0.1),
-      maxWidth = maxW
-    } = opts;
-
-    const f = bold ? fontBold : font;
-    // simple wrap
-    const words = String(txt ?? '').split(/\s+/).filter(Boolean);
-    let line = '';
-    const lines = [];
-    for (const w of words) {
-      const test = line ? line + ' ' + w : w;
-      const width = f.widthOfTextAtSize(test, size);
-      if (width > maxWidth && line) {
-        lines.push(line);
-        line = w;
-      } else {
-        line = test;
-      }
-    }
-    if (line) lines.push(line);
-    for (const l of lines) {
-      page.drawText(l, { x, y, size, font: f, color });
-      y -= (size + 3);
-    }
-  }
-
-  function hr(sp=10) { y -= sp; }
-  function sectionTitle(t) {
-    hr(8);
-    page.drawRectangle({ x: margin, y: y-18, width: maxW, height: 22, color: rgb(0.09,0.18,0.26), opacity: 1 });
-    const oldX = x; x = margin + 10; y -= 14;
-    drawText(t, { bold:true, size:12, color: rgb(1,1,1) });
-    x = oldX;
-    hr(6);
-  }
-
-  // Header (match your HTML vibe)
-  page.drawRectangle({ x: margin, y: y-54, width: maxW, height: 54, color: rgb(0.09,0.18,0.26) });
-  x = margin + 12; y -= 18;
-  drawText('Pracht Irrigation – Pivot Inspection Report', { bold:true, size:16, color: rgb(1,1,1) });
-  drawText('Customer-facing summary of inspection findings', { size:10, color: rgb(0.9,0.93,0.96) });
-  hr(18);
-  x = margin;
-
-  // Summary card
-  sectionTitle('Inspection Summary');
-  const rows = [
-    ['Customer / Company', data.customerName],
-    ['System Brand', data.systemBrand],
-    ['Field Name', data.fieldName],
-    ['Location', data.location],
-    ['Date of Inspection', data.inspectionDate],
-    ['Hours on Machine', data.machineHours],
-    ['Inspection Performed By', data.inspectedBy],
-    ['Start Time', data.startTime],
-    ['End Time', data.endTime]
-  ];
-
-  for (const [label, value] of rows) {
-    drawText(label + ':', { bold:true, size:11 });
-    drawText(value || '—', { size:11 });
-    hr(2);
-  }
-
-  // Notes (only include non-empty)
-  const noteMap = [
-    ['Well / Motor Oil', data.notes?.wellMotorOil],
-    ['Drip Oil System', data.notes?.dripOilSystem],
-    ['Well Panel', data.notes?.wellPanel],
-    ['Water Supply', data.notes?.waterSupply],
-    ['Main Control Panel', data.notes?.mainControlPanel],
-    ['Pivot Foundation', data.notes?.pivotFoundation],
-    ['Anchoring System', data.notes?.anchoringSystem],
-    ['Center Point Structure', data.notes?.centerPointStructure],
-    ['Collector Ring', data.notes?.collectorRing],
-    ['Tower Boots Note', data.notes?.towerBootNote]
-  ].filter(([,v]) => (v || '').trim().length);
-
-  if (noteMap.length) {
-    sectionTitle('Notes & Observations');
-    for (const [label, value] of noteMap) {
-      drawText(label + ':', { bold:true, size:11 });
-      drawText(value, { size:11 });
-      hr(6);
-    }
-  }
-
-  // Towers (customer-facing: show tower comments + any “needs attention”)
-  if (Array.isArray(data.towers) && data.towers.length) {
-    sectionTitle('Tower Findings');
-    for (const t of data.towers) {
-      drawText(`Tower ${t.id}`, { bold:true, size:12 });
-      if ((t.comment || '').trim()) {
-        drawText('Comment:', { bold:true, size:11 });
-        drawText(t.comment, { size:11 });
-      }
-
-      // Pull non-good selections (anything not "good")
-      const comps = t.components || {};
-      const issues = [];
-      for (const [k, v] of Object.entries(comps)) {
-        // values look like {status:'good'|'monitor'|'problem', detail:'...'}
-        if (v && typeof v === 'object') {
-          const st = v.status || '';
-          const detail = (v.detail || '').trim();
-          if (st && st !== 'good') {
-            issues.push(`${k}: ${st}${detail ? ' — ' + detail : ''}`);
-          }
-        } else if (typeof v === 'string' && v && v !== 'good') {
-          issues.push(`${k}: ${v}`);
-        }
-      }
-
-      if (issues.length) {
-        drawText('Items to address:', { bold:true, size:11 });
-        for (const it of issues.slice(0,20)) drawText('• ' + it, { size:11 });
-      } else {
-        drawText('No issues flagged on this tower.', { size:11 });
-      }
-
-      hr(10);
-
-      // Page break if needed
-      if (y < 80) {
-        // add new page
-        const p2 = pdfDoc.addPage([612,792]);
-        // move drawing context
-        page.setRotation; // no-op; keep linter calm
-        // rebind "page" by mutation trick: store in outer variable
-        // (pdf-lib pages are objects; easiest is to shadow with let, but we keep minimal edits)
-      }
-      // (We’ll keep customer report to 1 page for now; we can add full paging after it’s working.)
-    }
-  }
-
-  return await pdfDoc.save();
-}
-
-async function buildTechPdfBytes(data) {
-  const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([612, 792]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-  const margin = 36;
-  let x = margin;
-  let y = 792 - margin;
-  const maxW = 612 - margin*2;
-
-  function drawLine(txt, bold=false, size=11) {
-    const f = bold ? fontBold : font;
-    page.drawText(String(txt ?? ''), { x, y, size, font: f, color: rgb(0.1,0.1,0.1) });
-    y -= (size + 4);
-  }
-
-  page.drawRectangle({ x: margin, y: y-40, width: maxW, height: 40, color: rgb(0.09,0.18,0.26) });
-  x = margin + 12; y -= 16;
-  page.drawText('Pracht Irrigation – Tech Inspection Notes', { x, y, size: 14, font: fontBold, color: rgb(1,1,1) });
-  y -= 22;
-  x = margin;
-
-  drawLine(`Customer: ${data.customerName || '—'}`, true);
-  drawLine(`Field: ${data.fieldName || '—'}  |  Brand: ${data.systemBrand || '—'}`);
-  drawLine(`Date: ${data.inspectionDate || '—'}  |  Hours: ${data.machineHours || '—'}`);
-  y -= 10;
-
-  if (Array.isArray(data.towers) && data.towers.length) {
-    drawLine('Tower quick list (non-good items only):', true);
-    for (const t of data.towers) {
-      const comps = t.components || {};
-      const issues = [];
-      for (const [k, v] of Object.entries(comps)) {
-        if (v && typeof v === 'object') {
-          const st = v.status || '';
-          const detail = (v.detail || '').trim();
-          if (st && st !== 'good') issues.push(`${k}=${st}${detail ? `(${detail})` : ''}`);
-        } else if (typeof v === 'string' && v && v !== 'good') {
-          issues.push(`${k}=${v}`);
-        }
-      }
-      if (issues.length) drawLine(`T${t.id}: ${issues.join(' | ')}`);
-    }
-  }
-
-  return await pdfDoc.save();
-}
-
-function downloadBytesAsPdf(bytes, filename) {
-  const blob = new Blob([bytes], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'report.pdf';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-// Drop-in replacement: keep same signature as your app uses
 async function generateReportPDF(viewId, filename) {
-  if (!window.PDFLib) throw new Error('pdf-lib not loaded');
-  const data = gatherFormData();
-  const bytes = (String(viewId || '').toLowerCase().includes('tech'))
-    ? await buildTechPdfBytes(data)
-    : await buildCustomerPdfBytes(data);
-  downloadBytesAsPdf(bytes, filename);
+  const view = document.getElementById(viewId);
+  if (!view) {
+    console.error("Report view not found:", viewId);
+    return;
+  }
+
+  const target = view.querySelector(".report-page") || view;
+
+  try {
+    await html2pdf().set({
+      margin: 0.25,
+      filename: filename || "report.pdf",
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff"
+      },
+      jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
+    }).from(target).save();
+  } catch (err) {
+    console.error("PDF error:", err);
+  }
 }
 
 window.generateReportPDF = generateReportPDF;
-
 
     
 </script>
