@@ -1765,12 +1765,22 @@ let towerCounter = 0;
 </script>
   <script>
   // Generate a PDF from a report container
-  async function generateReportPDF(containerId, filename) {
+async function generateReportPDF(containerId, filename) {
   const el = document.getElementById(containerId);
   if (!el) {
     alert("Report container not found: " + containerId);
     return;
   }
+
+  const prevDisplay = el.style.display;
+  const prevVisibility = el.style.visibility;
+
+  // Force visible for export
+  el.style.display = "block";
+  el.style.visibility = "visible";
+
+  // Let browser render it
+  await new Promise(r => setTimeout(r, 50));
 
   const opt = {
     margin: 0.5,
@@ -1780,15 +1790,15 @@ let towerCounter = 0;
     jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
   };
 
-  // THIS LINE WAS MISSING
-  await html2pdf().from(el).set(opt).save();
+  try {
+    await html2pdf().from(el).set(opt).save();
+  } finally {
+    // Restore original state
+    el.style.display = prevDisplay;
+    el.style.visibility = prevVisibility;
+  }
 }
 
-
-    await html2pdf().from(el).set(opt).save();
-return true;
-
-  }
 
   // Manual test helpers (for now)
   window.generateTechPDF = () =>
