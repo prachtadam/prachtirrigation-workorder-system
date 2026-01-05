@@ -581,7 +581,6 @@
 
   </style>
   <script type="module" src="../shared/supabase.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 
 </head>
 <body>
@@ -1766,36 +1765,82 @@ let towerCounter = 0;
    
 </script>
   <script type="module">
-  // Generate a PDF from a report container
-async function generateReportPDF(viewId, filename) {
-  const view = document.getElementById(viewId);
-  if (!view) {
-    console.error("Report view not found:", viewId);
-    return;
+  // Generate a PDF from a report container (customerReportView / techReportView)
+  // IMPORTANT: We render into #pdfContainer (off-screen) so html2canvas doesn't fight the modal UI.
+  async function generateReportPDF(viewId, filename) {
+    try {
+      const view = document.getElementById(viewId);
+      if (!view) {
+        console.error("generateReportPDF: view not found:", viewId);
+        return;
+      }
+
+      const target = view.querySelector(".report-page") || view;
+      const pdfContainer = document.getElementById("pdfContainer");
+      if (!pdfContainer) {
+        console.error("generateReportPDF: #pdfContainer not found");
+        return;
+      }
+
+      // Copy the rendered report HTML into the off-screen container for capture
+      pdfContainer.innerHTML = target.outerHTML;
+      const src = pdfContainer.firstElementChild;
+      if (!src) {
+        console.error("generateReportPDF: nothing to render inside #pdfContainer");
+        return;
+      }
+
+      // Wait for layout + fonts + images
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch (_) {}
+      }
+      const imgs = Array.from(pdfContainer.querySelectorAll("img"));
+      await Promise.all(imgs.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(res => {
+          img.onload = () => res();
+          img.onerror = () => res();
+        });
+      }));
+
+      const opt = {
+        margin: 0.25,
+        filename: filename || "report.pdf",
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          scrollX: 0,
+          scrollY: 0,
+          // Remove transforms/filters inside the cloned document to avoid blank renders
+          onclone: (doc) => {
+            doc.documentElement.style.transform = "none";
+            doc.body.style.transform = "none";
+            doc.body.style.filter = "none";
+            doc.querySelectorAll("*").forEach((el) => {
+              const cs = doc.defaultView.getComputedStyle(el);
+              if (cs.transform && cs.transform !== "none") el.style.transform = "none";
+              if (cs.filter && cs.filter !== "none") el.style.filter = "none";
+            });
+          }
+        },
+        jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
+      };
+
+      await html2pdf().from(src).set(opt).save();
+    } catch (err) {
+      console.error("generateReportPDF error:", err);
+    } finally {
+      // Keep container clean
+      const pdfContainer = document.getElementById("pdfContainer");
+      if (pdfContainer) pdfContainer.innerHTML = "";
+    }
   }
 
-  const target = view.querySelector(".report-page") || view;
-
-  try {
-    await html2pdf().set({
-      margin: 0.25,
-      filename: filename || "report.pdf",
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff"
-      },
-      jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
-    }).from(target).save();
-  } catch (err) {
-    console.error("PDF error:", err);
-  }
-}
-
-window.generateReportPDF = generateReportPDF;
-
-    
+  window.generateReportPDF = generateReportPDF;
 </script>
 
 </body>
