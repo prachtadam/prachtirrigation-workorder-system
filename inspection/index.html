@@ -1783,6 +1783,7 @@ async function generateReportPDF(viewId, filename) {
   clone.style.background = "#fff";
   clone.style.zIndex = "999999";
   document.body.appendChild(clone);
+  await new Promise(r=> requestAnimationFrame(() => requestAnimationFrame(r)));
 
   try {
     await html2pdf().set({
