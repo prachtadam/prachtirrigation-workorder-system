@@ -1786,6 +1786,15 @@ async function generateReportPDF(viewId, filename) {
   clone.style.zIndex = "999999";
   document.body.appendChild(clone);
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const imgs = Array.from(clone.querySelectorAll("img"));
+await Promise.all(imgs.map(img => {
+  if (img.complete) return Promise.resolve();
+  return new Promise(res => {
+    img.onload = () => res();
+    img.onerror = () => res();
+  });
+}));
+
 
   try {
     await html2pdf().set({
