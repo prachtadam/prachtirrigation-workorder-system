@@ -1802,9 +1802,16 @@ await Promise.all(imgs.map(img => {
       filename: filename || "report.pdf",
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#ffffff"
+  scale: 2,
+  useCORS: true,
+  allowTaint: true,
+  backgroundColor: "#ffffff",
+  scrollX: 0,
+  scrollY: 0,
+  windowWidth: clone.scrollWidth,
+  windowHeight: clone.scrollHeight
+},
+
       },
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
     }).from(clone).save();
