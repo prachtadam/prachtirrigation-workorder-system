@@ -1816,7 +1816,7 @@ await Promise.all(imgs.map(img => {
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
     }).from(clone).save();
   } finally {
-    clone.remove();
+    setTimeout(() => clone.remove(), 2000);
   }
 }
 
