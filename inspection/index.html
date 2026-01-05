@@ -347,7 +347,14 @@
       color: #fff;
     }
 
-    .btn-remove-tower {
+    
+    .btn-add-end-tower {
+      background: #6f42c1;
+      border: 1px solid #5a36a5;
+      color: #fff;
+    }
+    .btn-add-end-tower:hover { filter: brightness(0.95); }
+.btn-remove-tower {
       background: #f44336;
       color: #fff;
     }
@@ -579,18 +586,7 @@
       margin: 0 auto;
     }
 
-  
-    .btn-add-end-tower {
-      background: #6f42c1;
-      border: 1px solid #5a36a5;
-      color: #fff;
-    }
-    .btn-add-end-tower:hover { filter: brightness(0.95); }
-
-    .end-tower-only { display: none; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px dashed #ced4da; }
-    .end-tower-only label { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
-
-</style>
+  </style>
   <script type="module" src="../shared/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 
@@ -800,7 +796,7 @@
 
         <!-- Tower-level condition buttons -->
         <div class="tower-conditions">
-          <div class="tower-cond-row boot-row">
+          <div class="tower-cond-row">
             <div class="tower-cond-label">Tower Boot</div>
             <div class="tower-cond-buttons" data-cond-type="boot">
               <button type="button" class="tower-cond-btn" data-status="good" data-value="Good">Good</button>
@@ -822,7 +818,6 @@
 
         <div class="tower-actions">
           <button type="button" class="btn-add-tower">+ Add Tower</button>
-          <button type="button" class="btn-add-end-tower">+ Add End Tower</button>
           <button type="button" class="btn-remove-tower">Remove Tower</button>
         </div>
       </div>
@@ -833,15 +828,7 @@
       <div class="component-card-header">
         <span id="cardTitle">Component</span>
         <button class="close-card-btn" id="closeCardBtn" aria-label="Close card">×</button>
-      
-          <div class="end-tower-only">
-            <label><input type="checkbox" class="chk-sandtrap" /> Cleaned Sand Trap</label>
-            <div class="tower-notes">
-              <label>Comments / Notes</label>
-              <textarea class="tower-comment end-tower-comment" rows="3" placeholder="End tower notes..."></textarea>
-            </div>
-          </div>
-</div>
+      </div>
       <div class="component-card-body">
         <div class="options-row" id="optionsRow"></div>
 
@@ -1177,25 +1164,12 @@ let towerCounter = 0;
       closeCard();
     });
 
-    function initTowerSection(sectionEl, towerId, isEndTower) {
-      // towerId is the normal tower index; end tower uses a fixed id
-      const effectiveId = isEndTower ? 'end_tower' : String(towerId);
-      sectionEl.dataset.towerId = effectiveId;
+    function initTowerSection(sectionEl, towerId) {
+      sectionEl.dataset.towerId = String(towerId);
+      const numSpan = sectionEl.querySelector('.tower-number');
+      if (numSpan) numSpan.textContent = String(towerId);
 
-      // Title & number (number refreshed later by refreshTowerLabels)
-      const titleEl = sectionEl.querySelector('.section-title');
-      if (titleEl) {
-        titleEl.innerHTML = isEndTower
-          ? 'End Tower Inspection – Tower <span class="tower-number">?</span>'
-          : 'Tower Inspection – Tower <span class="tower-number">?</span>';
-      }
-
-      // Toggle end-tower-only UI
-      const bootRow = sectionEl.querySelector('.boot-row');
-      if (bootRow) bootRow.style.display = isEndTower ? 'none' : '';
-      const endOnly = sectionEl.querySelector('.end-tower-only');
-      if (endOnly) endOnly.style.display = isEndTower ? 'block' : 'none';
-const canvasEl = sectionEl.querySelector('.tower-layout');
+      const canvasEl = sectionEl.querySelector('.tower-layout');
       const hotspots = canvasEl.querySelectorAll('.hotspot');
 
       hotspots.forEach(h => {
@@ -1261,65 +1235,94 @@ const canvasEl = sectionEl.querySelector('.tower-layout');
           return;
         }
         // Clean up stored data for this tower
-        delete selections[sectionEl.dataset.towerId];
-        delete towerMeta[sectionEl.dataset.towerId];
-        if (sectionEl.classList.contains('end-tower')) endTowerExists = false;
+        delete selections[towerId];
+        delete towerMeta[towerId];
         sectionEl.remove();
-        refreshTowerLabels();
       });
     }
+
+    let hasEndTower = false;
+    let endTowerSectionEl = null;
+    let endTowerId = null;
 
     function addTower() {
       towerCounter += 1;
       const cloneFrag = towerTemplate.content.cloneNode(true);
       const section = cloneFrag.querySelector('.tower-section');
 
-      // If an end tower exists, always insert normal towers before it
-      const endSection = towersContainer.querySelector('.tower-section.end-tower');
-      if (endSection) towersContainer.insertBefore(section, endSection);
-      else towersContainer.appendChild(section);
-
-      initTowerSection(section, towerCounter, false);
-      refreshTowerLabels();
-    }
-
-    let endTowerExists = false;
-
-    function refreshTowerLabels() {
-      const sections = Array.from(towersContainer.querySelectorAll('.tower-section'));
-      const normal = sections.filter(s => !s.classList.contains('end-tower'));
-      normal.forEach((s, i) => {
-        const n = s.querySelector('.tower-number');
-        if (n) n.textContent = String(i + 1);
-        s.dataset.towerIndex = String(i + 1);
-      });
-
-      const end = sections.find(s => s.classList.contains('end-tower'));
-      if (end) {
-        const n = end.querySelector('.tower-number');
-        if (n) n.textContent = String(normal.length + 1);
-        end.dataset.towerIndex = String(normal.length + 1);
+      // If an end tower exists, always insert new towers BEFORE it so end tower stays last
+      if (hasEndTower && endTowerSectionEl && endTowerSectionEl.parentNode === towersContainer) {
+        towersContainer.insertBefore(section, endTowerSectionEl);
+      } else {
+        towersContainer.appendChild(section);
       }
 
-      towerCounter = normal.length; // keep counter aligned
-      endTowerExists = !!end;
+      initTowerSection(section, towerCounter);
     }
 
     function addEndTower() {
-      if (endTowerExists) {
+      if (hasEndTower) {
         alert('End tower already added.');
         return;
       }
+      hasEndTower = true;
+
+      towerCounter += 1;
       const cloneFrag = towerTemplate.content.cloneNode(true);
       const section = cloneFrag.querySelector('.tower-section');
+
       section.classList.add('end-tower');
+      section.dataset.towerType = 'end';
+
+      // Update title
+      const titleEl = section.querySelector('.section-title');
+      if (titleEl) {
+        titleEl.childNodes.forEach(n => {
+          if (n.nodeType === Node.TEXT_NODE) n.textContent = 'End Tower Inspection – Tower ';
+        });
+      }
+      const numSpan = section.querySelector('.tower-number');
+      if (numSpan) numSpan.textContent = String(towerCounter);
+
+      // Remove Tower Boot condition row
+      const bootGroup = section.querySelector('.tower-cond-buttons[data-cond-type="boot"]');
+      if (bootGroup) {
+        const row = bootGroup.closest('.tower-cond-row');
+        if (row) row.remove();
+      }
+
+      // Add Cleaned Sand Trap checkbox row (after tower box row)
+      const conditions = section.querySelector('.tower-conditions');
+      if (conditions) {
+        const sandRow = document.createElement('div');
+        sandRow.className = 'tower-cond-row';
+        sandRow.innerHTML = `
+          <div class="tower-cond-label">Cleaned Sand Trap</div>
+          <div class="tower-cond-buttons" data-cond-type="sandtrap" style="display:flex;align-items:center;gap:10px;">
+            <label style="display:flex;align-items:center;gap:8px;color:#495057;font-weight:600;">
+              <input type="checkbox" class="end-sand-trap" />
+              Yes
+            </label>
+          </div>
+        `;
+        // insert after the first existing cond-row (typically Tower Box) if present
+        const firstRow = conditions.querySelector('.tower-cond-row');
+        if (firstRow && firstRow.nextSibling) {
+          conditions.insertBefore(sandRow, firstRow.nextSibling);
+        } else {
+          conditions.appendChild(sandRow);
+        }
+      }
+
+      // Append at end
       towersContainer.appendChild(section);
-      initTowerSection(section, null, true);
-      refreshTowerLabels();
+      endTowerSectionEl = section;
+      endTowerId = towerCounter;
+
+      initTowerSection(section, towerCounter);
     }
 // Initialize first tower
     addTower();
-    refreshTowerLabels();
 
     // ---------- GEOLOCATION ----------
 
@@ -1377,10 +1380,16 @@ const canvasEl = sectionEl.querySelector('.tower-layout');
         const commentEl = section.querySelector('.tower-comment');
         const towerComment = commentEl ? commentEl.value : '';
 
+        const isEndTower = section.dataset.towerType === 'end';
+        const sandTrapEl = section.querySelector('.end-sand-trap');
+        const cleanedSandTrap = sandTrapEl ? !!sandTrapEl.checked : false;
+
         const towerData = {
           id: towerId,
+          towerType: isEndTower ? 'end' : 'standard',
           comment: towerComment,
-          towerBoot: (towerMeta[towerId] && towerMeta[towerId].boot) ? towerMeta[towerId].boot : null,
+          cleanedSandTrap: isEndTower ? cleanedSandTrap : null,
+          towerBoot: (!isEndTower && towerMeta[towerId] && towerMeta[towerId].boot) ? towerMeta[towerId].boot : null,
           towerBox: (towerMeta[towerId] && towerMeta[towerId].box) ? towerMeta[towerId].box : null,
           components: selections[towerId] || {}
         };
