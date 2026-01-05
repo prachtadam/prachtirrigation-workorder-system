@@ -1780,7 +1780,9 @@ let towerCounter = 0;
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
     };
 
-    return html2pdf().from(el).set(opt).outputPdf("blob");
+    await html2pdf().from(el).set(opt).save();
+return true;
+
   }
 
   // Manual test helpers (for now)
