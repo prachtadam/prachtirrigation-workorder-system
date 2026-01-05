@@ -1763,6 +1763,34 @@ let towerCounter = 0;
       openReportModal();
     });
 </script>
+  <script>
+  // Generate a PDF from a report container
+  async function generateReportPDF(containerId, filename) {
+    const el = document.getElementById(containerId);
+    if (!el) {
+      alert("Report container not found: " + containerId);
+      return null;
+    }
+
+    const opt = {
+      margin: 0.5,
+      filename,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
+    };
+
+    return html2pdf().from(el).set(opt).outputPdf("blob");
+  }
+
+  // Manual test helpers (for now)
+  window.generateTechPDF = () =>
+    generateReportPDF("techReportView", "tech-report.pdf");
+
+  window.generateCustomerPDF = () =>
+    generateReportPDF("customerReportView", "customer-report.pdf");
+</script>
+
 </body>
 </html>
 
