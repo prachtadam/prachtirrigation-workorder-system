@@ -1769,9 +1769,9 @@ async function generateReportPDF(viewId, filename) {
   const view = document.getElementById(viewId);
   if (!view) throw new Error(`generateReportPDF: Can't find #${viewId}`);
 
-  // Prefer a report page wrapper if it exists
   const target = view.querySelector(".report-page") || view;
-    // clone into body for reliable capture (avoids modal/transform ancestors)
+
+  // Clone into body to avoid modal / transform issues
   const clone = target.cloneNode(true);
   clone.style.display = "block";
   clone.style.visibility = "visible";
@@ -1779,55 +1779,30 @@ async function generateReportPDF(viewId, filename) {
   clone.style.position = "fixed";
   clone.style.left = "0";
   clone.style.top = "0";
-  clone.style.width = "816px";   // ~8.5in at 96dpi
+  clone.style.width = "816px"; // ~8.5in @96dpi
   clone.style.background = "#fff";
   clone.style.zIndex = "999999";
   document.body.appendChild(clone);
-
-  // temporarily neutralize modal/transform issues
-const prevTarget = {
-  position: target.style.position,
-  transform: target.style.transform
-};
-target.style.position = "relative";
-target.style.transform = "none";
-
-
-  // Force visibility for capture (minimal)
-  const prev = {
-    display: view.style.display,
-    visibility: view.style.visibility,
-    opacity: view.style.opacity
-  };
-  view.style.display = "block";
-  view.style.visibility = "visible";
-  view.style.opacity = "1";
 
   try {
     await html2pdf().set({
       margin: 0.25,
       filename: filename || "report.pdf",
       image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff"
+      },
       jsPDF: { unit: "in", format: "letter", orientation: "portrait" }
     }).from(clone).save();
   } finally {
-   } finally {
-    // restore view styles
-    view.style.display = prev.display;
-    view.style.visibility = prev.visibility;
-    view.style.opacity = prev.opacity;
-
-    // restore target styles
-    target.style.position = prevTarget.position;
-    target.style.transform = prevTarget.transform;
     clone.remove();
   }
-
-
-  }
 }
+
 window.generateReportPDF = generateReportPDF;
+
 console.log("generateReportPDF loaded:", generateReportPDF.toString().slice(0,80));
 
 
