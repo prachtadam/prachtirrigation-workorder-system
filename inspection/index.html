@@ -2219,36 +2219,113 @@ let towerCounter = 0;
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     }
 
-    btnSubmitReports.addEventListener('click', async () => {
-      // Keep the inspection flow/data exactly as-is — we only generate/download PDFs here.
+
+    async function _waitForFonts() {
+      if (document.fonts && document.fonts.ready) {
+        try { await document.fonts.ready; } catch (e) {}
+      }
+    }
+
+    async function _waitForImages(rootEl) {
+      const imgs = Array.from(rootEl.querySelectorAll("img"));
+      await Promise.all(imgs.map(img => {
+        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise(resolve => {
+          img.addEventListener("load", resolve, { once: true });
+          img.addEventListener("error", resolve, { once: true });
+        });
+      }));
+    }
+
+    async function buildPdfFromHtmlString(htmlString, opts = {}) {
+      if (!window.html2canvas) throw new Error("html2canvas not loaded. Check the script include.");
+      if (!window.jspdf || !window.jspdf.jsPDF) throw new Error("jsPDF not loaded. Check the script include.");
+
+      // Use the existing off-screen container (renderable, not display:none)
+      const container = document.getElementById("pdfContainer");
+      if (!container) throw new Error("pdfContainer not found.");
+
+      container.innerHTML = htmlString;
+
+      await _waitForFonts();
+      await _waitForImages(container);
+
+      // Render to canvas (crisp)
+      const canvas = await html2canvas(container, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        logging: false,
+        windowWidth: container.scrollWidth || 1000
+      });
+
+      const pdf = new window.jspdf.jsPDF({ orientation: "p", unit: "pt", format: "letter" });
+
+      const pageW = pdf.internal.pageSize.getWidth();   // 612
+      const pageH = pdf.internal.pageSize.getHeight();  // 792
+
+      const imgData = canvas.toDataURL("image/jpeg", 0.92);
+
+      const imgW = pageW;
+      const imgH = (canvas.height * imgW) / canvas.width;
+
+      let y = 0;
+      let page = 0;
+
+      while (y < imgH - 1) {
+        if (page > 0) pdf.addPage();
+        pdf.addImage(imgData, "JPEG", 0, -y, imgW, imgH);
+        y += pageH;
+        page++;
+      }
+
+      // Return ArrayBuffer bytes (perfect for zipping)
+      return pdf.output("arraybuffer");
+    }
+
+    btnSubmitReports.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // STRICT: do not alter inspection logic — only generate & download PDFs.
       try {
         btnSubmitReports.disabled = true;
-        btnSubmitReports.textContent = "Generating…";
+        const originalText = btnSubmitReports.textContent;
+        btnSubmitReports.textContent = "Generating PDFs…";
 
         const data = gatherFormData();
         const insNum = (window.STATE && window.STATE.inspectionNumber) ? window.STATE.inspectionNumber : "";
 
-        const { customerBytes, techBytes } = await downloadReportsZip({ data, inspectionNumber: insNum });
+        const safeCustomer = (data.customerName || "Customer").toString().trim().replace(/[^\w\-]+/g, "_").slice(0, 40);
+        const base = insNum ? `PivotInspection_${insNum}_${safeCustomer}` : `PivotInspection_${Date.now()}_${safeCustomer}`;
 
-        // Optional: if opened with ?job_id=... and Supabase is configured, also attach behind the scenes.
-        // Never block the download if attach fails.
-        try {
-          const { jobId, orgId } = _getJobContext();
-          if (jobId) {
-            await uploadPdfToSupabase({ jobId, orgId, kind: "customer", bytes: customerBytes });
-            await uploadPdfToSupabase({ jobId, orgId, kind: "tech", bytes: techBytes });
-            console.log("Inspection PDFs uploaded and attached to job:", jobId);
-          }
-        } catch (attachErr) {
-          console.warn("PDF attach failed (download still completed):", attachErr);
-        }
+        const customerBytes = await buildPdfFromHtmlString(generateCustomerReportHtml(), { title: "Customer Report" });
+        const techBytes = await buildPdfFromHtmlString(generateTechReportHtml(), { title: "Tech Report" });
 
+        // Download as a single zip (most reliable — avoids browsers blocking multiple downloads)
+        if (!window.JSZip) throw new Error("JSZip not loaded. Check the JSZip script include.");
+        const zip = new JSZip();
+        zip.file(`${base}_Customer.pdf`, customerBytes);
+        zip.file(`${base}_Tech.pdf`, techBytes);
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        downloadBlob(zipBlob, `${base}_Reports.zip`);
+
+        // Also keep in memory for later "attach to job" work
+        window.STATE = window.STATE || {};
+        window.STATE.generatedReports = {
+          base,
+          customer: { bytes: customerBytes, filename: `${base}_Customer.pdf` },
+          tech: { bytes: techBytes, filename: `${base}_Tech.pdf` }
+        };
+
+        btnSubmitReports.textContent = originalText;
       } catch (err) {
-        console.error("PDF generation failed:", err);
-        alert("PDF generation failed. Open DevTools Console to see the error details.");
+        console.error(err);
+        alert("PDF generation failed: " + (err && err.message ? err.message : err));
       } finally {
         btnSubmitReports.disabled = false;
-        btnSubmitReports.textContent = "Submit";
+        if (btnSubmitReports.textContent === "Generating PDFs…") btnSubmitReports.textContent = "Submit";
       }
     });
 
