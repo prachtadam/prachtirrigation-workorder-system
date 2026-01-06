@@ -2146,15 +2146,47 @@ let towerCounter = 0;
       }
     }
 
-    async function _waitForImages(root) {
-      const imgs = Array.from(root.querySelectorAll('img'));
+    async function _waitForImages(rootEl) {
+      const imgs = Array.from(rootEl.querySelectorAll('img'));
       await Promise.all(imgs.map(img => {
+        // If already loaded successfully, skip.
         if (img.complete && img.naturalWidth > 0) return Promise.resolve();
         return new Promise(resolve => {
           img.addEventListener('load', resolve, { once: true });
-          img.addEventListener('error', resolve, { once: true });
+          img.addEventListener('error', resolve, { once: true }); // don't hang forever
         });
       }));
+    }
+
+    async function _inlineImagesAsDataUrls(rootEl) {
+      const imgs = Array.from(rootEl.querySelectorAll('img'));
+      // Inline only non-data URLs to avoid CORS/tainted-canvas failures.
+      for (const img of imgs) {
+        const src = img.getAttribute('src') || '';
+        if (!src || src.startsWith('data:')) continue;
+
+        try {
+          const abs = new URL(src, document.baseURI).toString();
+          const res = await fetch(abs, { cache: 'force-cache' });
+          if (!res.ok) continue;
+          const blob = await res.blob();
+
+          // Convert to data URL
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+
+          img.setAttribute('crossorigin', 'anonymous');
+          img.src = dataUrl;
+        } catch (e) {
+          // If inlining fails, we still try to render; worst case html2canvas will skip the image.
+          // No throw here on purpose.
+        }
+      }
+      await _waitForImages(rootEl);
     }
 
     async function _htmlToPdfBlob(htmlString, filenameBase) {
@@ -2166,16 +2198,30 @@ let towerCounter = 0;
       stage.appendChild(wrapper);
 
       await _waitForFonts();
-      await _waitForImages(wrapper);
 
-      const canvas = await html2canvas(wrapper, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        windowWidth: 900
-      });
+      // Critical: inline images to avoid "tainted canvas" + blank/failed PDFs on local/relative assets.
+      await _inlineImagesAsDataUrls(wrapper);
+
+      if (typeof html2canvas !== 'function') {
+        throw new Error('html2canvas is not loaded. Check internet/CDN access.');
+      }
+      if (!window.jspdf || !window.jspdf.jsPDF) {
+        throw new Error('jsPDF is not loaded. Check internet/CDN access.');
+      }
+
+      let canvas;
+      try {
+        canvas = await html2canvas(wrapper, {
+          scale: 2,
+          backgroundColor: '#ffffff',
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+          windowWidth: 900
+        });
+      } catch (err) {
+        throw new Error('html2canvas failed: ' + (err && err.message ? err.message : String(err)));
+      }
 
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: 'letter' });
@@ -2183,7 +2229,13 @@ let towerCounter = 0;
       const pageW = pdf.internal.pageSize.getWidth();   // 612
       const pageH = pdf.internal.pageSize.getHeight();  // 792
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      let imgData;
+      try {
+        imgData = canvas.toDataURL('image/jpeg', 0.92);
+      } catch (err) {
+        throw new Error('Canvas toDataURL failed (tainted canvas). Image inlining may have failed.');
+      }
+
       const imgW = pageW;
       const imgH = (canvas.height * imgW) / canvas.width;
 
@@ -2244,7 +2296,7 @@ let towerCounter = 0;
 
       } catch (err) {
         console.error('PDF generation failed:', err);
-        alert('PDF generation failed. Open DevTools console for details.');
+        alert('PDF generation failed: ' + (err && err.message ? err.message : err));
       }
     });
 
