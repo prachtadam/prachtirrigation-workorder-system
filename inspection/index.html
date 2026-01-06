@@ -6,9 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- PDF library for customer reports -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-
-  <style>
+<style>
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       margin: 0;
@@ -588,8 +586,7 @@
 
   </style>
   <script type="module" src="../shared/supabase.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
-
+  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 </head>
 <body>
   <form id="inspectionForm">
@@ -1565,7 +1562,8 @@ let towerCounter = 0;
         return;
       }
       const doc = win.document;
-      doc.write('<html><head><title>Pivots – Customer Report</title></head><body>');
+      doc.write('<html><head><title>Pivots – Customer Report</title>  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+</head><body>');
       doc.write(html);
       doc.write('</body></html>');
       doc.close();
@@ -1635,7 +1633,8 @@ let towerCounter = 0;
           }
         </style>
       `);
-      doc.write('</head><body>');
+      doc.write('  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+</head><body>');
 
       doc.write('<div class="tech-header">');
       doc.write('<h1>Pivot Inspection – Tech Report</h1>');
@@ -1846,11 +1845,10 @@ let towerCounter = 0;
     }
 
     // ---------- SUBMIT (IN-APP) ----------
-    btnSubmitReports.addEventListener('click', async () => {
+    btnSubmitReports.addEventListener('click', () => {
       // Build both reports and show them inside the app (no popups, no downloads)
       customerReportView.innerHTML = '<div class="report-page">' + generateCustomerReportHtml() + '</div>';
       techReportView.innerHTML = generateTechReportHtml();
-
 
       setActiveTab('customer');
      openReportModal();
@@ -1858,36 +1856,318 @@ let towerCounter = 0;
 
    
 </script>
-  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
   <script type="module">
   // Generate a PDF from a report container
-async function generateReportPDF(type = "customer") {
-  const data = gatherFormData();
+// ===================== PDF (Programmatic via pdf-lib) =====================
+// We do NOT screenshot HTML. We draw the PDF from gatherFormData() so tower cards can repeat
+// and never split mid-card.
 
-  let pdfBytes;
-  let filename;
+function _pdfRgb(hex) {
+  const h = String(hex || "#000000").replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  return PDFLib.rgb(r, g, b);
+}
 
-  if (type === "tech") {
-    pdfBytes = await buildTechPdfBytes(data);
-    filename = "inspection-tech-report.pdf";
+function _wrapLines(font, size, text, maxWidth) {
+  const words = String(text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  for (const w of words) {
+    const test = line ? (line + " " + w) : w;
+    if (font.widthOfTextAtSize(test, size) <= maxWidth) line = test;
+    else {
+      if (line) lines.push(line);
+      line = w;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+
+function _statusToPill(status) {
+  if (status === "good") return { label: "OK", fill: "#2f9e44", text: "#ffffff", warn: false };
+  if (status === "warning") return { label: "ATTN", fill: "#ffd43b", text: "#111111", warn: true };
+  if (status === "bad") return { label: "REPAIR", fill: "#c92a2a", text: "#ffffff", warn: true };
+  return { label: "—", fill: "#adb5bd", text: "#111111", warn: false };
+}
+
+function _drawText(page, x, y, text, { font, size = 10, color = "#111111" } = {}) {
+  page.drawText(String(text ?? ""), { x, y, font, size, color: _pdfRgb(color) });
+}
+
+function _drawPill(page, x, yTop, text, fillHex, textHex, font, size = 9) {
+  const padX = 6, padY = 3;
+  const textW = font.widthOfTextAtSize(text, size);
+  const w = textW + padX * 2;
+  const h = size + padY * 2;
+  page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: _pdfRgb(fillHex), borderColor: _pdfRgb(fillHex), borderWidth: 0 });
+  _drawText(page, x + padX, yTop - h + padY, text, { font, size, color: textHex });
+  return { w, h };
+}
+
+function _drawWarn(page, x, y, size = 12) {
+  const fill = _pdfRgb("#ffd43b");
+  page.drawPolygon([{x, y}, {x:x+size, y}, {x:x+size/2, y:y+size}], { color: fill, borderColor: fill, borderWidth: 0 });
+  page.drawText("!", { x: x + size*0.38, y: y + size*0.18, size: size*0.7, font: page._warnFont, color: _pdfRgb("#111111") });
+}
+
+function _newPage(doc) {
+  return doc.addPage([612, 792]); // US Letter portrait
+}
+
+function _drawHeader(page, boldFont) {
+  page.drawRectangle({ x: 0, y: 792 - 64, width: 612, height: 64, color: _pdfRgb("#1865ab") });
+  _drawText(page, 36, 792 - 42, "Pracht Irrigation – Pivot Inspection Report", { font: boldFont, size: 16, color: "#ffffff" });
+}
+
+function _drawInfoCard(page, yTop, data, boldFont, regularFont) {
+  const x = 36, w = 612 - 72, h = 120;
+  page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: _pdfRgb("#f1f3f5"), borderColor: _pdfRgb("#dee2e6"), borderWidth: 1 });
+  _drawText(page, x + 12, yTop - 22, "Job / Customer Info", { font: boldFont, size: 12, color: "#111111" });
+
+  const items = [
+    ["Customer", data.customerName],
+    ["Field", data.fieldName],
+    ["Location", data.location],
+    ["Brand", data.systemBrand],
+    ["Inspection Date", data.inspectionDate],
+    ["Machine Hours", data.machineHours],
+    ["Inspected By", data.inspectedBy],
+    ["Start", data.startTime],
+    ["End", data.endTime],
+  ];
+  const colW = (w - 24) / 3;
+  let i = 0;
+  for (const [label, val] of items) {
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const fx = x + 12 + col * colW;
+    const fy = yTop - 44 - row * 26;
+    _drawText(page, fx, fy, label + ":", { font: regularFont, size: 9, color: "#495057" });
+    _drawText(page, fx + 70, fy, val || "", { font: regularFont, size: 9, color: "#111111" });
+    i++;
+  }
+  return yTop - h - 16;
+}
+
+function _drawSectionBar(page, yTop, title, boldFont) {
+  const x = 36, w = 612 - 72;
+  page.drawRectangle({ x, y: yTop - 22, width: w, height: 22, color: _pdfRgb("#1865ab") });
+  _drawText(page, x + 10, yTop - 16, title, { font: boldFont, size: 11, color: "#ffffff" });
+  return yTop - 30;
+}
+
+function _drawSystemNotes(page, yTop, data, boldFont, regularFont) {
+  let y = _drawSectionBar(page, yTop, "System Notes", boldFont);
+  const x = 36, w = 612 - 72;
+  const rows = [
+    ["Well Motor Oil", data.notes?.wellMotorOil],
+    ["Drip Oil System", data.notes?.dripOilSystem],
+    ["Well Panel", data.notes?.wellPanel],
+    ["Water Supply", data.notes?.waterSupply],
+    ["Main Control Panel", data.notes?.mainControlPanel],
+    ["Pivot Foundation", data.notes?.pivotFoundation],
+    ["Anchoring System", data.notes?.anchoringSystem],
+    ["Center Point Structure", data.notes?.centerPointStructure],
+    ["Collector Ring", data.notes?.collectorRing],
+    ["Tower Boot Note", data.notes?.towerBootNote],
+  ];
+  const boxH = rows.length * 14 + 18;
+  page.drawRectangle({ x, y: y - boxH, width: w, height: boxH, color: _pdfRgb("#ffffff"), borderColor: _pdfRgb("#dee2e6"), borderWidth: 1 });
+  let yy = y - 18;
+  for (const [lbl, val] of rows) {
+    _drawText(page, x + 10, yy, lbl + ":", { font: regularFont, size: 9, color: "#111111" });
+    _drawText(page, x + 165, yy, val || "", { font: regularFont, size: 9, color: "#495057" });
+    yy -= 14;
+  }
+  return y - boxH - 14;
+}
+
+function _estimateTowerCardHeight(tower, regularFont) {
+  const base = 86;
+  const comps = tower.components ? Object.keys(tower.components) : [];
+  const compLines = Math.max(1, comps.length);
+  const compHeight = compLines * 12 + 14;
+
+  const lines = _wrapLines(regularFont, 9, tower.comment || "", 540);
+  const commentHeight = Math.max(1, lines.length) * 11 + 16;
+
+  const endExtra = tower.towerType === "end" ? 18 : 0;
+  return base + compHeight + commentHeight + endExtra;
+}
+
+function _drawTowerCard(page, yTop, tower, boldFont, regularFont) {
+  const x = 36, w = 612 - 72;
+  const cardH = _estimateTowerCardHeight(tower, regularFont);
+  page.drawRectangle({ x, y: yTop - cardH, width: w, height: cardH, color: _pdfRgb("#ffffff"), borderColor: _pdfRgb("#dee2e6"), borderWidth: 1 });
+
+  const title = (tower.towerType === "end") ? `End Tower ${tower.id ?? ""}` : `Tower ${tower.id ?? ""}`;
+  _drawText(page, x + 12, yTop - 20, title, { font: boldFont, size: 12 });
+
+  const box = _statusToPill(tower.towerBox);
+  const pillY = yTop - 34;
+  const p1 = _drawPill(page, x + 12, pillY, `BOX: ${box.label}`, box.fill, box.text, boldFont, 9);
+  if (box.warn) _drawWarn(page, x + 12 + p1.w + 6, pillY - 12, 12);
+
+  let nextY = yTop - 54;
+
+  if (tower.towerType !== "end") {
+    const boot = _statusToPill(tower.towerBoot);
+    const p2 = _drawPill(page, x + 12, nextY, `BOOT: ${boot.label}`, boot.fill, boot.text, boldFont, 9);
+    if (boot.warn) _drawWarn(page, x + 12 + p2.w + 6, nextY - 12, 12);
+    nextY -= 20;
   } else {
-    pdfBytes = await buildCustomerPdfBytes(data);
-    filename = "inspection-customer-report.pdf";
+    const checked = tower.cleanedSandTrap ? "☑" : "☐";
+    _drawText(page, x + 12, nextY - 10, `${checked} Cleaned Sand Trap`, { font: regularFont, size: 10 });
+    nextY -= 20;
   }
 
-  // FOR NOW: download (we’ll swap this for Supabase upload next)
-  const blob = new Blob([pdfBytes], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
+  _drawText(page, x + 12, nextY - 10, "Items:", { font: boldFont, size: 10 });
+  nextY -= 18;
 
+  const comps = tower.components ? Object.entries(tower.components) : [];
+  if (!comps.length) {
+    _drawText(page, x + 24, nextY - 10, "—", { font: regularFont, size: 9, color: "#495057" });
+    nextY -= 14;
+  } else {
+    for (const [k, v] of comps) {
+      const line = `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`;
+      const lines = _wrapLines(regularFont, 9, line, w - 60);
+      for (const ln of lines) {
+        _drawText(page, x + 24, nextY - 10, ln, { font: regularFont, size: 9, color: "#495057" });
+        nextY -= 12;
+      }
+      nextY -= 2;
+    }
+  }
+
+  _drawText(page, x + 12, nextY - 10, "Comments:", { font: boldFont, size: 10 });
+  nextY -= 16;
+
+  for (const ln of _wrapLines(regularFont, 9, tower.comment || "", w - 48)) {
+    _drawText(page, x + 24, nextY - 10, ln, { font: regularFont, size: 9, color: "#495057" });
+    nextY -= 12;
+  }
+
+  return yTop - cardH - 12;
+}
+
+async function buildCustomerPdfBytes(data) {
+  const { PDFDocument, StandardFonts } = PDFLib;
+  const doc = await PDFDocument.create();
+  const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
+  const regularFont = await doc.embedFont(StandardFonts.Helvetica);
+
+  let page = _newPage(doc);
+  page._warnFont = boldFont;
+  _drawHeader(page, boldFont);
+
+  let y = 792 - 78;
+  y = _drawInfoCard(page, y, data, boldFont, regularFont);
+  y = _drawSystemNotes(page, y, data, boldFont, regularFont);
+  y = _drawSectionBar(page, y, "Tower Inspections", boldFont);
+
+  for (const tower of (Array.isArray(data.towers) ? data.towers : [])) {
+    const cardH = _estimateTowerCardHeight(tower, regularFont);
+    if (y - cardH < 70) {
+      page = _newPage(doc);
+      page._warnFont = boldFont;
+      _drawHeader(page, boldFont);
+      y = 792 - 78;
+      y = _drawSectionBar(page, y, "Tower Inspections (cont.)", boldFont);
+    }
+    y = _drawTowerCard(page, y, tower, boldFont, regularFont);
+  }
+
+  return await doc.save();
+}
+
+async function buildTechPdfBytes(data) {
+  const { PDFDocument, StandardFonts } = PDFLib;
+  const doc = await PDFDocument.create();
+  const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
+  const regularFont = await doc.embedFont(StandardFonts.Helvetica);
+
+  let page = _newPage(doc);
+  _drawHeader(page, boldFont);
+
+  let y = 792 - 78;
+  y = _drawInfoCard(page, y, data, boldFont, regularFont);
+  y = _drawSectionBar(page, y, "Issues (Attention / Repair only)", boldFont);
+
+  const issues = [];
+  for (const t of (Array.isArray(data.towers) ? data.towers : [])) {
+    const boxIssue = (t.towerBox === "warning" || t.towerBox === "bad");
+    const bootIssue = (t.towerType !== "end") && (t.towerBoot === "warning" || t.towerBoot === "bad");
+    if (boxIssue || bootIssue) {
+      issues.push(`${t.towerType === "end" ? "End Tower" : "Tower " + t.id}: Box=${_statusToPill(t.towerBox).label}` + (t.towerType !== "end" ? `, Boot=${_statusToPill(t.towerBoot).label}` : ""));
+    }
+  }
+  if (!issues.length) issues.push("No issues flagged.");
+
+  for (const line of issues) {
+    for (const ln of _wrapLines(regularFont, 10, line, 612 - 96)) {
+      if (y < 80) {
+        page = _newPage(doc);
+        _drawHeader(page, boldFont);
+        y = 792 - 78;
+        y = _drawSectionBar(page, y, "Issues (cont.)", boldFont);
+      }
+      _drawText(page, 48, y - 10, "• " + ln, { font: regularFont, size: 10 });
+      y -= 14;
+    }
+    y -= 2;
+  }
+
+  return await doc.save();
+}
+
+function _downloadPdfBytes(bytes, filename) {
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
+
+async function generateReportPDF(kind = "customer") {
+  if (!window.PDFLib) throw new Error("PDFLib not found. Make sure pdf-lib script is included.");
+  const data = gatherFormData();
+  return (kind === "tech") ? await buildTechPdfBytes(data) : await buildCustomerPdfBytes(data);
+}
+
+async function downloadReportPDF(kind = "customer") {
+  const bytes = await generateReportPDF(kind);
+  const filename = (kind === "tech") ? "inspection-tech-report.pdf" : "inspection-customer-report.pdf";
+  _downloadPdfBytes(bytes, filename);
+  return bytes;
+}
+
+// Opens a new tab immediately (gesture-friendly), then shows the PDF when ready.
+window.openReportPDF = (kind = "customer") => {
+  const w = window.open("about:blank", "_blank");
+  (async () => {
+    try {
+      const bytes = await generateReportPDF(kind);
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      if (w) w.location.href = url;
+      else _downloadPdfBytes(bytes, (kind === "tech") ? "inspection-tech-report.pdf" : "inspection-customer-report.pdf");
+    } catch (e) {
+      console.error(e);
+      if (w) w.document.body.innerHTML = "<pre style='padding:12px;font-family:monospace'>" + String(e) + "</pre>";
+    }
+  })();
+};
+
+window.generateReportPDF = generateReportPDF;
+window.downloadReportPDF = downloadReportPDF;
 
 
 window.generateReportPDF = generateReportPDF;
