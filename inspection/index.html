@@ -582,8 +582,6 @@
   </style>
   <script type="module" src="../shared/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 
 </head>
@@ -2117,189 +2115,26 @@ let towerCounter = 0;
       return html;
     }
 
-    // ---------- SUBMIT (DOWNLOAD PDFs) ----------
-    // NOTE: We keep your original report HTML generation exactly as-is.
-    // The only change: on Submit we generate two PDFs and download them (no in-app report modal).
-
-    function _ensurePdfStage() {
-      let stage = document.getElementById('__pdf_stage__');
-      if (!stage) {
-        stage = document.createElement('div');
-        stage.id = '__pdf_stage__';
-        stage.style.position = 'fixed';
-        stage.style.left = '-100000px';
-        stage.style.top = '0';
-        stage.style.width = '900px';
-        stage.style.background = '#ffffff';
-        stage.style.zIndex = '-1';
-        stage.style.padding = '0';
-        stage.style.margin = '0';
-        document.body.appendChild(stage);
-      }
-      stage.innerHTML = '';
-      return stage;
-    }
-
-    async function _waitForFonts() {
-      if (document.fonts && document.fonts.ready) {
-        try { await document.fonts.ready; } catch (e) {}
-      }
-    }
-
-    async function _waitForImages(rootEl) {
-      const imgs = Array.from(rootEl.querySelectorAll('img'));
-      await Promise.all(imgs.map(img => {
-        // If already loaded successfully, skip.
-        if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-        return new Promise(resolve => {
-          img.addEventListener('load', resolve, { once: true });
-          img.addEventListener('error', resolve, { once: true }); // don't hang forever
-        });
-      }));
-    }
-
-    async function _inlineImagesAsDataUrls(rootEl) {
-      const imgs = Array.from(rootEl.querySelectorAll('img'));
-      // Inline only non-data URLs to avoid CORS/tainted-canvas failures.
-      for (const img of imgs) {
-        const src = img.getAttribute('src') || '';
-        if (!src || src.startsWith('data:')) continue;
-
-        try {
-          const abs = new URL(src, document.baseURI).toString();
-          const res = await fetch(abs, { cache: 'force-cache' });
-          if (!res.ok) continue;
-          const blob = await res.blob();
-
-          // Convert to data URL
-          const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-
-          img.setAttribute('crossorigin', 'anonymous');
-          img.src = dataUrl;
-        } catch (e) {
-          // If inlining fails, we still try to render; worst case html2canvas will skip the image.
-          // No throw here on purpose.
-        }
-      }
-      await _waitForImages(rootEl);
-    }
-
-    async function _htmlToPdfBlob(htmlString, filenameBase) {
-      const stage = _ensurePdfStage();
-      const wrapper = document.createElement('div');
-      wrapper.style.width = '850px';
-      wrapper.style.background = '#ffffff';
-      wrapper.innerHTML = htmlString;
-      stage.appendChild(wrapper);
-
-      await _waitForFonts();
-
-      // Critical: inline images to avoid "tainted canvas" + blank/failed PDFs on local/relative assets.
-      await _inlineImagesAsDataUrls(wrapper);
-
-      if (typeof html2canvas !== 'function') {
-        throw new Error('html2canvas is not loaded. Check internet/CDN access.');
-      }
-      if (!window.jspdf || !window.jspdf.jsPDF) {
-        throw new Error('jsPDF is not loaded. Check internet/CDN access.');
-      }
-
-      let canvas;
-      try {
-        canvas = await html2canvas(wrapper, {
-          scale: 2,
-          backgroundColor: '#ffffff',
-          useCORS: true,
-          allowTaint: true,
-          logging: false,
-          windowWidth: 900
-        });
-      } catch (err) {
-        throw new Error('html2canvas failed: ' + (err && err.message ? err.message : String(err)));
-      }
-
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: 'letter' });
-
-      const pageW = pdf.internal.pageSize.getWidth();   // 612
-      const pageH = pdf.internal.pageSize.getHeight();  // 792
-
-      let imgData;
-      try {
-        imgData = canvas.toDataURL('image/jpeg', 0.92);
-      } catch (err) {
-        throw new Error('Canvas toDataURL failed (tainted canvas). Image inlining may have failed.');
-      }
-
-      const imgW = pageW;
-      const imgH = (canvas.height * imgW) / canvas.width;
-
-      let y = 0;
-      let page = 0;
-      while (y < imgH) {
-        if (page > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -y, imgW, imgH);
-        y += pageH;
-        page += 1;
-      }
-
-      const blob = pdf.output('blob');
-      return { blob, filename: `${filenameBase}.pdf` };
-    }
-
-    function _downloadBlob(blob, filename) {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
-    }
-
-    function _safeFilePart(s) {
-      return (s || '')
-        .toString()
-        .trim()
-        .replace(/[^\w\-]+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .slice(0, 40) || 'Inspection';
-    }
-
+    // ---------- SUBMIT (IN-APP) ----------
     btnSubmitReports.addEventListener('click', async () => {
+      // Build both reports and show them inside the app
+      customerReportView.innerHTML = '<div class="report-page">' + generateCustomerReportHtml() + '</div>';
+      techReportView.innerHTML = generateTechReportHtml();
+      setActiveTab('customer');
+      openReportModal();
+
+      // Behind the scenes: generate PDFs + upload + attach to job (no downloads)
       try {
-        // Build your original report HTML (same exact layout & pills)
-        const data = gatherFormData();
-        const stamp = (data.inspectionDate || '').toString().replace(/[\/\\:]/g, '-');
-        const customerPart = _safeFilePart(data.customerName);
-        const fieldPart = _safeFilePart(data.fieldName);
-        const base = `PivotInspection_${customerPart}_${fieldPart}_${stamp || Date.now()}`;
+        const { jobId, orgId } = _getJobContext();
+        if (!jobId) {
+          console.warn("No job_id/jobId in URL. PDFs not attached. Add ?job_id=... when opening inspection from the Tech App.");
+          return;
+        }
 
-        const customerHtml = '<div class="report-page">' + generateCustomerReportHtml() + '</div>';
-        const techHtml = generateTechReportHtml(); // already includes .report-page wrapper
+        const customerBytes = await generateCustomerPdfBytes();
+        const techBytes = await generateTechPdfBytes();
 
-        // Generate PDFs and download immediately
-        const customerPdf = await _htmlToPdfBlob(customerHtml, `${base}_Customer`);
-        _downloadBlob(customerPdf.blob, customerPdf.filename);
-
-        // Small delay improves reliability in some browsers with multiple downloads
-        await new Promise(r => setTimeout(r, 350));
-
-        const techPdf = await _htmlToPdfBlob(techHtml, `${base}_Tech`);
-        _downloadBlob(techPdf.blob, techPdf.filename);
-
-      } catch (err) {
-        console.error('PDF generation failed:', err);
-        alert('PDF generation failed: ' + (err && err.message ? err.message : err));
-      }
-    });
-
+        await uploadPdfToSupabase({ jobId, orgId, kind: "customer", bytes: customerBytes });
         await uploadPdfToSupabase({ jobId, orgId, kind: "tech", bytes: techBytes });
 
         console.log("Inspection PDFs uploaded and attached to job:", jobId);
