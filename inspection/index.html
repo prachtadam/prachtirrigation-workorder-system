@@ -1846,10 +1846,11 @@ let towerCounter = 0;
     }
 
     // ---------- SUBMIT (IN-APP) ----------
-    btnSubmitReports.addEventListener('click', () => {
+    btnSubmitReports.addEventListener('click', async () => {
       // Build both reports and show them inside the app (no popups, no downloads)
       customerReportView.innerHTML = '<div class="report-page">' + generateCustomerReportHtml() + '</div>';
       techReportView.innerHTML = generateTechReportHtml();
+
 
       setActiveTab('customer');
      openReportModal();
