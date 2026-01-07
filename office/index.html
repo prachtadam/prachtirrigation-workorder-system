@@ -406,6 +406,21 @@
   white-space: pre-wrap;
 }
 
+
+/* --- SearchDropdown (type-to-search select) --- */
+.sd{position:relative; width:100%;}
+.sd-label{display:block; font-weight:700; margin:0 0 6px;}
+.sd-btn{width:100%; display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border:1px solid rgba(255,255,255,.14); border-radius:14px; background:rgba(255,255,255,.06); color:var(--text); cursor:pointer;}
+.sd-btn-text{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:left;}
+.sd-caret{opacity:.7}
+.sd-pop{position:absolute; z-index:9999; width:100%; margin-top:8px; border:1px solid rgba(255,255,255,.14); border-radius:14px; background:#0f141a; box-shadow:0 18px 40px rgba(0,0,0,.45); padding:10px;}
+.sd-search{width:100%; padding:10px 12px; border:1px solid rgba(255,255,255,.14); border-radius:12px; background:rgba(255,255,255,.06); color:var(--text); outline:none;}
+.sd-list{max-height:260px; overflow:auto; margin-top:8px;}
+.sd-item{padding:10px; border-radius:12px; cursor:pointer; display:flex; justify-content:space-between; gap:10px;}
+.sd-item:hover{background:rgba(255,255,255,.08);}
+.sd-item small{color:rgba(255,255,255,.65);}
+.sd-empty{padding:10px; color:rgba(255,255,255,.65);}
+
 </style>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 
@@ -698,20 +713,38 @@
     </div>
     <div class="modalBody">
       <div class="formGrid">
-        <div class="field">
-          <label>Customer</label>
-          <input class="input" id="jobCustomerSearch" list="jobCustomerList" placeholder="Type to search customers…" autocomplete="off"/>
-          <datalist id="jobCustomerList"></datalist>
-          <input type="hidden" id="jobCustomer" />
-          <div class="help">Start typing a name/phone to filter, then pick from the list.</div>
-        </div>
-        <div class="field">
-          <label>Field</label>
-          <input class="input" id="jobFieldSearch" list="jobFieldList" placeholder="Type to search fields…" autocomplete="off"/>
-          <datalist id="jobFieldList"></datalist>
-          <input type="hidden" id="jobField" />
-          <div class="help">Fields are filtered by the selected customer.</div>
-        </div>
+        
+<div class="field">
+  <label>Customer</label>
+  <div class="sd" id="jobCustomerSD">
+    <button type="button" class="sd-btn" data-role="toggle">
+      <span class="sd-btn-text" data-role="selectedText">Select a customer…</span>
+      <span class="sd-caret">▾</span>
+    </button>
+    <div class="sd-pop" data-role="pop" hidden>
+      <input class="sd-search" data-role="search" type="text" placeholder="Type to search customers…" autocomplete="off"/>
+      <div class="sd-list" data-role="list"></div>
+    </div>
+    <input type="hidden" id="jobCustomer" data-role="value"/>
+  </div>
+  <div class="help">Type to filter, then click the customer. (Stores the real customer_id.)</div>
+</div>
+<div class="field">
+  <label>Field</label>
+  <div class="sd" id="jobFieldSD">
+    <button type="button" class="sd-btn" data-role="toggle">
+      <span class="sd-btn-text" data-role="selectedText">Select a field…</span>
+      <span class="sd-caret">▾</span>
+    </button>
+    <div class="sd-pop" data-role="pop" hidden>
+      <input class="sd-search" data-role="search" type="text" placeholder="Type to search fields…" autocomplete="off"/>
+      <div class="sd-list" data-role="list"></div>
+    </div>
+    <input type="hidden" id="jobField" data-role="value"/>
+  </div>
+  <div class="help">Fields are filtered by the selected customer. (Stores the real field_id.)</div>
+</div>
+
 
         <div class="field">
           <label>Assigned Truck</label>
@@ -1197,15 +1230,29 @@ const UI = {
   toast(msg){ alert(msg); }
 };
 
-function jobTypePrefix(type){
-  const t = String(type||"").toLowerCase();
-  if(t.includes("service")) return "SC";
+
+function jobTypePrefix(jobTypeId, jobTypeName){
+  const id = String(jobTypeId||"").trim().toLowerCase();
+  const name = String(jobTypeName||"").trim().toLowerCase();
+
+  // Prefer stable slug IDs first (Supabase source of truth)
+  if(id==="inspection") return "PI";
+  if(id==="service_call" || id==="service-call" || id==="service") return "SC";
+  if(id==="repair") return "RP";
+  if(id==="install" || id==="installation") return "IN";
+  if(id==="electrical") return "EL";
+
+  // Fallback to name matching (still safe; doesn't affect FK writes)
+  const t = name || id;
   if(t.includes("inspection")) return "PI";
-  if(t.includes("repair") || t.includes("general")) return "GR";
-  if(t.includes("build") || t.includes("install")) return "BI";
+  if(t.includes("service")) return "SC";
+  if(t.includes("repair")) return "RP";
+  if(t.includes("install")) return "IN";
+  if(t.includes("electrical")) return "EL";
   if(t.includes("trench") || t.includes("pipe")) return "TP";
   return "JB";
 }
+
 function pad4(n){ return String(n).padStart(4,"0"); }
 
 function uid(prefix="id"){ return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`; }
@@ -1249,14 +1296,7 @@ function defaultDB(){
       truckStock:{},              // {truckId: [{id, partNumber, minQty}]}
       truckTools:{},              // {truckId: [{id, name, qty}]}
       products:[],                // [{partNumber, description}]
-      jobTypes:[
-        {id:uid("jt"), name:"Pivot Inspection"},
-        {id:uid("jt"), name:"General Repair"},
-        {id:uid("jt"), name:"Service Call"},
-        {id:uid("jt"), name:"Build / Install"},
-        {id:uid("jt"), name:"Trenching / Pipe"},
-        {id:uid("jt"), name:"Other"},
-      ],
+      jobTypes:[],
       techs:[],
       helpers:[],
       assignments:[]
@@ -2019,16 +2059,11 @@ function powerSourceOptions(selected){
 }
 
 
-function getSelectedJobTypeName(){
-  const sel = document.getElementById("jobType");
-  if(!sel) return "Other";
-  const opt = sel.options ? sel.options[sel.selectedIndex] : null;
-  return (opt && (opt.dataset?.name || opt.textContent)) ? (opt.dataset?.name || opt.textContent) : (sel.value || "Other");
-}
 function updateJobNumberPreview(){
-  const typeName = getSelectedJobTypeName();
+  const type = document.getElementById("jobType")?.value || "Other";
   const next = (db?.meta?.jobSeq ?? 1000);
-  const code = jobTypePrefix(typeName) + pad4(next);
+  const typeName = document.getElementById("jobType")?.selectedOptions?.[0]?.textContent || type;
+  const code = jobTypePrefix(type, typeName) + pad4(next);
   const inp = document.getElementById("jobNumberPreview");
   if(inp) inp.value = code;
 }
@@ -2520,7 +2555,7 @@ async function addCustomer(payload){
 
     const c = payload.customer || {};
     const row = {
-      org_id: window.SUPABASE_ORG_ID || "pracht",
+      org_id: window.ORG_ID || "pracht",
       customer_id: customer_id,
       name: c.name || "",
       phone: c.phone || null,
@@ -2558,7 +2593,7 @@ async function addField(payload){
     if(!sb){ console.warn("Supabase client not ready (field)."); return field_id; }
 
   const row = {
-  org_id: window.SUPABASE_ORG_ID || "pracht",
+  org_id: window.ORG_ID || "pracht",
   field_id: field_id,
   customer_id: payload.customerId,
   name: payload.name,
@@ -2769,16 +2804,22 @@ function fillFieldSelect(elId, customerId){
     el.appendChild(opt);
   }
 }
+
 function fillJobTypeSelect(){
   const el = document.getElementById("jobType");
+  if(!el) return;
   el.innerHTML = "";
-  (db.settings.jobTypes || []).forEach(jt=>{
+
+  // Source of truth: Supabase job_types (loaded when opening Create Job)
+  const list = (state._jobCreate && Array.isArray(state._jobCreate.jobTypes)) ? state._jobCreate.jobTypes : [];
+  list.forEach(jt=>{
     const opt = document.createElement("option");
-    opt.value = jt.name;
-    opt.textContent = jt.name;
+    opt.value = jt.job_type_id;
+    opt.textContent = jt.name || jt.job_type_id;
     el.appendChild(opt);
   });
 }
+
 
 /* =====================
    Settings UI (live)
@@ -3309,70 +3350,6 @@ async function cloudFetchOOS(){
   return CLOUD.oos;
 }
 
-/* =====================
-   Supabase dropdown helpers (Create Job)
-===================== */
-async function refreshJobFieldsForSelectedCustomer(){
-  const sb = (getSupabase ? getSupabase() : (window.sb || null));
-  if(!sb) return;
-
-  const org = window.SUPABASE_ORG_ID || "pracht";
-  const customerId = document.getElementById("jobCustomer")?.value || "";
-  const fieldList = document.getElementById("jobFieldList");
-  const fieldSearch = document.getElementById("jobFieldSearch");
-  const fieldHidden = document.getElementById("jobField");
-
-  if(fieldHidden) fieldHidden.value = "";
-  if(fieldSearch) fieldSearch.value = "";
-  if(fieldList) fieldList.innerHTML = "";
-
-  if(!customerId){
-    // nothing selected yet
-    return;
-  }
-
-  const { data, error } = await sb
-    .from("fields")
-    .select("field_id,name,brand,serial_number,lat,lng")
-    .eq("org_id", org)
-    .eq("customer_id", customerId)
-    .order("name", {ascending:true});
-
-  if(error){
-    console.error("fields load error:", error);
-    UI.toast("Couldn't load fields for that customer.");
-    return;
-  }
-
-  state._jobCreate = state._jobCreate || {};
-  state._jobCreate.fields = data || [];
-  state._jobCreate.fieldLabelToId = new Map();
-
-  (state._jobCreate.fields||[]).forEach(f=>{
-    const id = f.field_id;
-    const short = String(id||"").slice(-6).toUpperCase();
-    const brand = f.brand ? ` (${f.brand})` : "";
-    const label = `${f.name || "(Unnamed Field)"}${brand} • ${short}`;
-    state._jobCreate.fieldLabelToId.set(label, id);
-
-    if(fieldList){
-      const opt = document.createElement("option");
-      opt.value = label;
-      fieldList.appendChild(opt);
-    }
-  });
-
-  // default to first field if available
-  const first = state._jobCreate.fields?.[0] || null;
-  if(first && fieldSearch && fieldHidden){
-    const short = String(first.field_id||"").slice(-6).toUpperCase();
-    const brand = first.brand ? ` (${first.brand})` : "";
-    const label = `${first.name || "(Unnamed Field)"}${brand} • ${short}`;
-    fieldSearch.value = label;
-    fieldHidden.value = first.field_id;
-  }
-}
-
 function _filter(list){
   const q = (document.getElementById("q").value||"").trim().toLowerCase();
   if(!q) return list;
@@ -3458,6 +3435,98 @@ async function resolveCurrent(){
   toast("Resolved.");
 }
 
+
+/* =====================
+   SearchDropdown (type-to-search select)
+===================== */
+class SearchDropdown{
+  constructor(rootEl, { placeholder="Select…", onChange=null } = {}){
+    this.root = rootEl;
+    this.btn = rootEl.querySelector('[data-role="toggle"]');
+    this.pop = rootEl.querySelector('[data-role="pop"]');
+    this.search = rootEl.querySelector('[data-role="search"]');
+    this.list = rootEl.querySelector('[data-role="list"]');
+    this.valueEl = rootEl.querySelector('[data-role="value"]');
+    this.textEl = rootEl.querySelector('[data-role="selectedText"]');
+    this.placeholder = placeholder;
+    this.onChange = onChange;
+    this.items = [];
+
+    if(this.textEl) this.textEl.textContent = placeholder;
+
+    this.btn?.addEventListener("click", ()=>this.toggle());
+    this.search?.addEventListener("input", ()=>this.render());
+
+    document.addEventListener("click",(e)=>{ if(!this.root.contains(e.target)) this.close(); });
+    document.addEventListener("keydown",(e)=>{ if(e.key==="Escape") this.close(); });
+  }
+
+  setItems(items){
+    this.items = Array.isArray(items) ? items : [];
+    if(this.search) this.search.value = "";
+    this.render();
+  }
+
+  get value(){ return this.valueEl?.value || ""; }
+
+  clear(){
+    if(this.valueEl) this.valueEl.value = "";
+    if(this.textEl) this.textEl.textContent = this.placeholder;
+    if(this.search) this.search.value = "";
+    this.render();
+    this.onChange?.({ id:"", label:"" });
+  }
+
+  open(){
+    if(this.pop) this.pop.hidden = false;
+    this.search?.focus();
+    this.render();
+  }
+  close(){ if(this.pop) this.pop.hidden = true; }
+  toggle(){ (this.pop?.hidden ?? true) ? this.open() : this.close(); }
+
+  render(){
+    if(!this.list) return;
+    const q = (this.search?.value || "").trim().toLowerCase();
+    const filtered = !q ? this.items : this.items.filter(it=>{
+      const label = (it.label||"").toLowerCase();
+      const sub = (it.sub||"").toLowerCase();
+      const id = (it.id||"").toLowerCase();
+      return label.includes(q) || sub.includes(q) || id.includes(q);
+    });
+
+    this.list.innerHTML = "";
+    if(!filtered.length){
+      const empty = document.createElement("div");
+      empty.className = "sd-empty";
+      empty.textContent = "No matches.";
+      this.list.appendChild(empty);
+      return;
+    }
+
+    filtered.forEach(it=>{
+      const row = document.createElement("div");
+      row.className = "sd-item";
+      row.innerHTML = `
+        <div style="min-width:0">
+          <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(it.label||"")}</div>
+          ${it.sub ? `<small>${escapeHTML(it.sub)}</small>` : ``}
+        </div>
+        <small>${escapeHTML(it.right||"")}</small>
+      `;
+      row.addEventListener("click", ()=>{
+        if(this.valueEl) this.valueEl.value = it.id || "";
+        if(this.textEl) this.textEl.textContent = it.label || this.placeholder;
+        this.close();
+        this.onChange?.({ id: it.id || "", label: it.label || "", item: it });
+      });
+      this.list.appendChild(row);
+    });
+  }
+}
+
+function escapeHTML(s){return String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");}
+
 /* =====================
    Clock + master render
 ===================== */
@@ -3536,68 +3605,68 @@ document.getElementById("menuSettings").onclick = ()=>{
   UI.openModal("modalSettings");
 };
 
+
 document.getElementById("btnCreateJob").onclick = async ()=>{
   const sb = (getSupabase ? getSupabase() : (window.sb || null));
   if(!sb){ UI.toast("Supabase client not ready."); return; }
-
   const org = window.SUPABASE_ORG_ID || "pracht";
 
   // Clear inputs
-  const jd = document.getElementById("jobDescription"); if(jd) jd.value = "";
-  const jn = document.getElementById("jobNotes"); if(jn) jn.value = "";
-  const custSearch = document.getElementById("jobCustomerSearch");
-  const fieldSearch = document.getElementById("jobFieldSearch");
-  const custHidden = document.getElementById("jobCustomer");
-  const fieldHidden = document.getElementById("jobField");
-  if(custSearch) custSearch.value = "";
-  if(fieldSearch) fieldSearch.value = "";
-  if(custHidden) custHidden.value = "";
-  if(fieldHidden) fieldHidden.value = "";
+  document.getElementById("jobDescription")?.value = "";
+  document.getElementById("jobNotes")?.value = "";
+  document.getElementById("jobCustomer") && (document.getElementById("jobCustomer").value = "");
+  document.getElementById("jobField") && (document.getElementById("jobField").value = "");
 
-  // Load reference data from Supabase (source of truth)
+  // Load reference lists from Supabase (source of truth)
   const [custQ, typeQ, truckQ] = await Promise.all([
-    sb.from("customers").select("customer_id,name,phone").eq("org_id", org).order("name", {ascending:true}),
-    sb.from("job_types").select("job_type_id,name,active").eq("org_id", org).eq("active", true).order("name", {ascending:true}),
-    sb.from("trucks").select("truck_id,name,active").eq("org_id", org).eq("active", true).order("name", {ascending:true})
+    sb.from("customers").select("customer_id,name,phone").eq("org_id", org).order("name",{ascending:true}),
+    sb.from("job_types").select("job_type_id,name,active").eq("org_id", org).eq("active", true).order("name",{ascending:true}),
+    sb.from("trucks").select("truck_id,name,active").eq("org_id", org).eq("active", true).order("name",{ascending:true})
   ]);
 
-  if(custQ.error){ console.error("customers load error:", custQ.error); UI.toast("Couldn't load customers."); return; }
-  if(typeQ.error){ console.error("job_types load error:", typeQ.error); UI.toast("Couldn't load job types."); return; }
-  if(truckQ.error){ console.error("trucks load error:", truckQ.error); /* trucks are optional */ }
+  if(custQ.error){ console.error(custQ.error); UI.toast("Couldn't load customers."); return; }
+  if(typeQ.error){ console.error(typeQ.error); UI.toast("Couldn't load job types."); return; }
+  if(truckQ.error){ console.warn("trucks load error:", truckQ.error); }
 
   state._jobCreate = state._jobCreate || {};
   state._jobCreate.customers = custQ.data || [];
-  state._jobCreate.jobTypes  = typeQ.data || [];
-  state._jobCreate.trucks    = (truckQ && truckQ.data) ? truckQ.data : [];
-  state._jobCreate.customerLabelToId = new Map();
-  state._jobCreate.fieldLabelToId = new Map();
+  state._jobCreate.jobTypes = typeQ.data || [];
+  state._jobCreate.trucks = (truckQ.data || []);
+  state._jobCreate.fields = [];
 
-  // ---- Customer searchable dropdown (datalist) ----
-  const custList = document.getElementById("jobCustomerList");
-  if(custList){
-    custList.innerHTML = "";
-    state._jobCreate.customerLabelToId.clear();
-    (state._jobCreate.customers||[]).forEach(c=>{
-      const id = c.customer_id;
-      const short = String(id||"").slice(-6).toUpperCase();
-      const label = `${c.name || "(Unnamed)"}${c.phone ? (" • "+c.phone) : ""} • ${short}`;
-      state._jobCreate.customerLabelToId.set(label, id);
-      const opt = document.createElement("option");
-      opt.value = label;
-      custList.appendChild(opt);
+  // Build / refresh dropdown instances
+  if(!state._jobCreate.customerDD){
+    state._jobCreate.customerDD = new SearchDropdown(document.getElementById("jobCustomerSD"),{
+      placeholder: "Select a customer…",
+      onChange: async ({ id })=>{
+        // reset field whenever customer changes
+        state._jobCreate.fieldDD?.clear();
+        await refreshJobFieldsForCustomer(id);
+      }
+    });
+  }
+  if(!state._jobCreate.fieldDD){
+    state._jobCreate.fieldDD = new SearchDropdown(document.getElementById("jobFieldSD"),{
+      placeholder: "Select a field…",
+      onChange: ()=>{}
     });
   }
 
-  // Default to first customer (if any) so Field list can populate
-  const firstCust = state._jobCreate.customers?.[0] || null;
-  if(firstCust && custSearch && custHidden){
-    const short = String(firstCust.customer_id||"").slice(-6).toUpperCase();
-    const label = `${firstCust.name || "(Unnamed)"}${firstCust.phone ? (" • "+firstCust.phone) : ""} • ${short}`;
-    custSearch.value = label;
-    custHidden.value = firstCust.customer_id;
-  }
+  // Load customer items
+  state._jobCreate.customerDD.setItems(
+    (state._jobCreate.customers||[]).map(c=>({
+      id: c.customer_id,
+      label: c.name || "(Unnamed)",
+      sub: c.phone || "",
+      right: String(c.customer_id||"").slice(-6).toUpperCase()
+    }))
+  );
 
-  // ---- Job Type (plain select) ----
+  // Default select none (force user pick)
+  state._jobCreate.customerDD.clear();
+  state._jobCreate.fieldDD.clear();
+
+  // Job Type (plain select from Supabase)
   const jtSel = document.getElementById("jobType");
   if(jtSel){
     jtSel.innerHTML = "";
@@ -3605,69 +3674,79 @@ document.getElementById("btnCreateJob").onclick = async ()=>{
       const opt = document.createElement("option");
       opt.value = jt.job_type_id;
       opt.textContent = jt.name || jt.job_type_id;
-      opt.dataset.name = jt.name || jt.job_type_id;
       jtSel.appendChild(opt);
     });
-    // default first
-    if(jtSel.options.length>0) jtSel.selectedIndex = 0;
+    if(jtSel.options.length) jtSel.selectedIndex = 0;
   }
 
-  // ---- Trucks (optional) ----
+  // Trucks (optional) — auto-tag from active truck selection (URL param or storage)
   const trSel = document.getElementById("jobTruck");
   if(trSel){
     trSel.innerHTML = "";
-    const trucks = state._jobCreate.trucks || [];
     const optNone = document.createElement("option");
     optNone.value = "";
-    optNone.textContent = "(No truck / not assigned yet)";
+    optNone.textContent = "(Auto / not set)";
     trSel.appendChild(optNone);
 
-    trucks.forEach(t=>{
+    (state._jobCreate.trucks||[]).forEach(t=>{
       const opt = document.createElement("option");
       opt.value = t.truck_id;
       opt.textContent = t.name || t.truck_id;
       trSel.appendChild(opt);
     });
 
-    // Auto-select from URL param or storage (so you don't have to pick every time)
     const url = new URL(location.href);
     const activeTruckId = url.searchParams.get("truck_id") || url.searchParams.get("truck") || localStorage.getItem("ACTIVE_TRUCK_ID") || "";
-    if(activeTruckId){
-      trSel.value = activeTruckId;
-      // Keep editable if you want; comment next line if you'd rather lock it
-      // trSel.disabled = true;
-    }
+    if(activeTruckId) trSel.value = activeTruckId;
   }
-
-  // ---- Load fields for selected customer ----
-  await refreshJobFieldsForSelectedCustomer();
 
   updateJobNumberPreview();
   UI.openModal("modalJob");
 };
 
-// Customer searchable dropdown (datalist)
-document.getElementById("jobCustomerSearch")?.addEventListener("change", async (e)=>{
-  const label = e.target.value || "";
-  const id = state._jobCreate?.customerLabelToId?.get(label) || "";
-  document.getElementById("jobCustomer").value = id;
-  // Reset field selection whenever customer changes
-  document.getElementById("jobField").value = "";
-  const fs = document.getElementById("jobFieldSearch"); if(fs) fs.value = "";
-  await refreshJobFieldsForSelectedCustomer();
+
+document.getElementById("jobCustomer").addEventListener("change", (e)=>{
+  fillFieldSelect("jobField", e.target.value);
 });
 
-document.getElementById("jobFieldSearch")?.addEventListener("change", (e)=>{
-  const label = e.target.value || "";
-  const id = state._jobCreate?.fieldLabelToId?.get(label) || "";
-  document.getElementById("jobField").value = id;
-});
+
+async function refreshJobFieldsForCustomer(customerId){
+  const sb = (getSupabase ? getSupabase() : (window.sb || null));
+  if(!sb) return;
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  if(!customerId){
+    state._jobCreate.fields = [];
+    state._jobCreate.fieldDD?.setItems([]);
+    return;
+  }
+
+  const { data, error } = await sb
+    .from("fields")
+    .select("field_id,brand,serial_number,tower_count,lat,lng")
+    .eq("org_id", org)
+    .eq("customer_id", customerId)
+    .order("created_at",{ascending:false});
+
+  if(error){ console.error(error); UI.toast("Couldn't load fields for that customer."); return; }
+
+  state._jobCreate.fields = data || [];
+  state._jobCreate.fieldDD?.setItems(
+    (data||[]).map(f=>{
+      const label = (f.brand && f.serial_number) ? `${f.brand} • ${f.serial_number}` :
+                    (f.brand ? `${f.brand} • ${String(f.field_id||"").slice(-6).toUpperCase()}` :
+                    `Field • ${String(f.field_id||"").slice(-6).toUpperCase()}`);
+      const sub = f.tower_count ? `Towers: ${f.tower_count}` : "";
+      return { id: f.field_id, label, sub, right: String(f.field_id||"").slice(-6).toUpperCase() };
+    })
+  );
+}
+
 
 document.getElementById("btnSaveJob").onclick = async ()=>{
   const customerId = document.getElementById("jobCustomer")?.value || "";
   const fieldId = document.getElementById("jobField")?.value || "";
   const jobTypeId = document.getElementById("jobType")?.value || "";
-  const jobTypeName = getSelectedJobTypeName();
+  const jobTypeName = document.getElementById("jobType")?.selectedOptions?.[0]?.textContent || jobTypeId;
   const description = (document.getElementById("jobDescription")?.value || "").trim();
   const notesOffice = document.getElementById("jobNotes")?.value || "";
 
@@ -3675,32 +3754,33 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
   if(!fieldId){ UI.toast("Pick a field."); return; }
   if(!jobTypeId){ UI.toast("Pick a job type."); return; }
 
-  // Job Number is automatic (example: PI1000)
-  const jobCode = jobTypePrefix(jobTypeName) + pad4(db.meta.jobSeq++);
+  // Job Title is automatic (example: PI1000)
+  const jobCode = jobTypePrefix(jobTypeId, jobTypeName) + pad4(db.meta.jobSeq++);
   const title = jobCode;
 
-  // Keep existing local behavior (local demo state)
+  // Keep local view behavior (offline-friendly)
   addJob({customerId, fieldId, type: jobTypeName, jobCode, title, description, notesOffice});
   updateJobNumberPreview();
   UI.closeModal("modalJob");
   state.filterStatus = "open";
   setView("jobs");
 
-  // ---- SUPABASE INSERT (office job create) ----
+  // SUPABASE INSERT (source of truth)
   try{
     const sb = (getSupabase ? getSupabase() : (window.sb || null));
     if(!sb){ console.warn("Supabase client not ready."); return; }
 
-    const truckId = document.getElementById("jobTruck")?.value || null;
     const t = nowISO();
-    const job_id = uid("job");
+    const url = new URL(location.href);
+    const activeTruckId = url.searchParams.get("truck_id") || url.searchParams.get("truck") || localStorage.getItem("ACTIVE_TRUCK_ID") || "";
+    const truckId = (document.getElementById("jobTruck")?.value || activeTruckId || null) || null;
 
     const payload = {
       org_id: window.SUPABASE_ORG_ID || "pracht",
-      job_id: job_id,
+      job_id: uid("job"),
       customer_id: customerId,
       field_id: fieldId,
-      truck_id: truckId || null,
+      truck_id: truckId,
       assigned_tech_id: null,
       job_type_id: jobTypeId,
       status: "open",
@@ -3709,14 +3789,13 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
       updated_at: t
     };
 
-    const { error: jobErr } = await sb.from("jobs").insert([payload]);
-    if(jobErr) console.error("jobs insert error:", jobErr);
-    else console.log("job saved to supabase:", job_id);
-
-  } catch (err) {
-    console.error("jobs insert exception:", err);
+    const { error } = await sb.from("jobs").insert(payload);
+    if(error){ console.error(error); UI.toast("Supabase insert failed (FK mismatch)."); }
+  }catch(err){
+    console.error(err);
   }
 };
+
 
 const { error: jobErr } = await sb.from("jobs").insert([payload]);
 if(jobErr) console.error("jobs insert error:", jobErr);
