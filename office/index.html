@@ -3334,6 +3334,34 @@ async function cloudFetchOOS(){
     el.appendChild(opt);
   });
 }
+ async function loadPeopleFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){
+    toast("Supabase not configured yet (People).");
+    return;
+  }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("people")
+    .select("*")
+    .eq("org_id", org)
+    .order("name");
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (People).");
+    return;
+  }
+
+  db.people = (data || []).map(p => ({
+    id: p.person_id,
+    name: p.name,
+    role: p.role,
+    active: p.active
+  }));
+}
+
  window.loadProductsFromSupabase = async function loadProductsFromSupabase(){
   const sb = getSupabase();
   if(!sb){
