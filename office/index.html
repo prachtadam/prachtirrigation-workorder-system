@@ -2481,7 +2481,7 @@ function updateJobStatusOffice(jobId, newStatus){
 /* =====================
    CRUD base
 ===================== */
-function addCustomer(payload){
+async function addCustomer(payload){
   const customer_id = uid("cust");
 
   // local save (keep your current behavior)
@@ -2507,6 +2507,23 @@ function addCustomer(payload){
     }]).then(({ error }) => {
       if (error) console.error("customer insert error:", error);
       else console.log("customer saved to supabase");
+       // 🔗 SUPABASE SAVE (NEW — DO NOT MOVE)
+  const row = {
+    org_id: window.ORG_ID,
+    customer_id: payload.customer_id,
+    name: payload.name,
+    phone: payload.phone || null,
+    email: payload.email || null
+  };
+
+  const { error } = await window.sb
+    .from("customers")
+    .upsert(row, { onConflict: "customer_id" });
+
+  if (error) {
+    console.error("Supabase customer insert failed:", error);
+  }
+
     });
   }
 }
