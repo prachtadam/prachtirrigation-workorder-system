@@ -700,11 +700,17 @@
       <div class="formGrid">
         <div class="field">
           <label>Customer</label>
-          <select class="select2" id="jobCustomer"></select>
+          <input class="input" id="jobCustomerSearch" list="jobCustomerList" placeholder="Type to search customers…" autocomplete="off"/>
+          <datalist id="jobCustomerList"></datalist>
+          <input type="hidden" id="jobCustomer" />
+          <div class="help">Start typing a name/phone to filter, then pick from the list.</div>
         </div>
         <div class="field">
           <label>Field</label>
-          <select class="select2" id="jobField"></select>
+          <input class="input" id="jobFieldSearch" list="jobFieldList" placeholder="Type to search fields…" autocomplete="off"/>
+          <datalist id="jobFieldList"></datalist>
+          <input type="hidden" id="jobField" />
+          <div class="help">Fields are filtered by the selected customer.</div>
         </div>
 
         <div class="field">
@@ -2013,10 +2019,16 @@ function powerSourceOptions(selected){
 }
 
 
+function getSelectedJobTypeName(){
+  const sel = document.getElementById("jobType");
+  if(!sel) return "Other";
+  const opt = sel.options ? sel.options[sel.selectedIndex] : null;
+  return (opt && (opt.dataset?.name || opt.textContent)) ? (opt.dataset?.name || opt.textContent) : (sel.value || "Other");
+}
 function updateJobNumberPreview(){
-  const type = document.getElementById("jobType")?.value || "Other";
+  const typeName = getSelectedJobTypeName();
   const next = (db?.meta?.jobSeq ?? 1000);
-  const code = jobTypePrefix(type) + pad4(next);
+  const code = jobTypePrefix(typeName) + pad4(next);
   const inp = document.getElementById("jobNumberPreview");
   if(inp) inp.value = code;
 }
@@ -2508,7 +2520,7 @@ async function addCustomer(payload){
 
     const c = payload.customer || {};
     const row = {
-      org_id: window.ORG_ID || "pracht",
+      org_id: window.SUPABASE_ORG_ID || "pracht",
       customer_id: customer_id,
       name: c.name || "",
       phone: c.phone || null,
@@ -2546,7 +2558,7 @@ async function addField(payload){
     if(!sb){ console.warn("Supabase client not ready (field)."); return field_id; }
 
   const row = {
-  org_id: window.ORG_ID || "pracht",
+  org_id: window.SUPABASE_ORG_ID || "pracht",
   field_id: field_id,
   customer_id: payload.customerId,
   name: payload.name,
@@ -3297,6 +3309,70 @@ async function cloudFetchOOS(){
   return CLOUD.oos;
 }
 
+/* =====================
+   Supabase dropdown helpers (Create Job)
+===================== */
+async function refreshJobFieldsForSelectedCustomer(){
+  const sb = (getSupabase ? getSupabase() : (window.sb || null));
+  if(!sb) return;
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const customerId = document.getElementById("jobCustomer")?.value || "";
+  const fieldList = document.getElementById("jobFieldList");
+  const fieldSearch = document.getElementById("jobFieldSearch");
+  const fieldHidden = document.getElementById("jobField");
+
+  if(fieldHidden) fieldHidden.value = "";
+  if(fieldSearch) fieldSearch.value = "";
+  if(fieldList) fieldList.innerHTML = "";
+
+  if(!customerId){
+    // nothing selected yet
+    return;
+  }
+
+  const { data, error } = await sb
+    .from("fields")
+    .select("field_id,name,brand,serial_number,lat,lng")
+    .eq("org_id", org)
+    .eq("customer_id", customerId)
+    .order("name", {ascending:true});
+
+  if(error){
+    console.error("fields load error:", error);
+    UI.toast("Couldn't load fields for that customer.");
+    return;
+  }
+
+  state._jobCreate = state._jobCreate || {};
+  state._jobCreate.fields = data || [];
+  state._jobCreate.fieldLabelToId = new Map();
+
+  (state._jobCreate.fields||[]).forEach(f=>{
+    const id = f.field_id;
+    const short = String(id||"").slice(-6).toUpperCase();
+    const brand = f.brand ? ` (${f.brand})` : "";
+    const label = `${f.name || "(Unnamed Field)"}${brand} • ${short}`;
+    state._jobCreate.fieldLabelToId.set(label, id);
+
+    if(fieldList){
+      const opt = document.createElement("option");
+      opt.value = label;
+      fieldList.appendChild(opt);
+    }
+  });
+
+  // default to first field if available
+  const first = state._jobCreate.fields?.[0] || null;
+  if(first && fieldSearch && fieldHidden){
+    const short = String(first.field_id||"").slice(-6).toUpperCase();
+    const brand = first.brand ? ` (${first.brand})` : "";
+    const label = `${first.name || "(Unnamed Field)"}${brand} • ${short}`;
+    fieldSearch.value = label;
+    fieldHidden.value = first.field_id;
+  }
+}
+
 function _filter(list){
   const q = (document.getElementById("q").value||"").trim().toLowerCase();
   if(!q) return list;
@@ -3460,51 +3536,151 @@ document.getElementById("menuSettings").onclick = ()=>{
   UI.openModal("modalSettings");
 };
 
-document.getElementById("btnCreateJob").onclick = ()=>{
-    // prime truck + job number preview
-    fillJobTruckSelect();
-    updateJobNumberPreview();
-  fillJobTruckSelect();
+document.getElementById("btnCreateJob").onclick = async ()=>{
+  const sb = (getSupabase ? getSupabase() : (window.sb || null));
+  if(!sb){ UI.toast("Supabase client not ready."); return; }
 
-  if(db.customers.length===0){ UI.toast("Add a customer first (Menu → Customers)."); return; }
-  if(db.fields.length===0){ UI.toast("Add a field first (Customer file → Add Field)."); return; }
+  const org = window.SUPABASE_ORG_ID || "pracht";
 
-  fillCustomerSelect("jobCustomer");
-  const custId = document.getElementById("jobCustomer").value;
-  fillFieldSelect("jobField", custId);
-
-  fillJobTypeSelect();
-
-  
+  // Clear inputs
   const jd = document.getElementById("jobDescription"); if(jd) jd.value = "";
-  document.getElementById("jobDescription").value = "";
-      document.getElementById("jobNotes").value = "";
-  updateJobNumberPreview();
-  document.getElementById("jobType").value = (db.settings.jobTypes[0]?.name || "Other");
+  const jn = document.getElementById("jobNotes"); if(jn) jn.value = "";
+  const custSearch = document.getElementById("jobCustomerSearch");
+  const fieldSearch = document.getElementById("jobFieldSearch");
+  const custHidden = document.getElementById("jobCustomer");
+  const fieldHidden = document.getElementById("jobField");
+  if(custSearch) custSearch.value = "";
+  if(fieldSearch) fieldSearch.value = "";
+  if(custHidden) custHidden.value = "";
+  if(fieldHidden) fieldHidden.value = "";
 
+  // Load reference data from Supabase (source of truth)
+  const [custQ, typeQ, truckQ] = await Promise.all([
+    sb.from("customers").select("customer_id,name,phone").eq("org_id", org).order("name", {ascending:true}),
+    sb.from("job_types").select("job_type_id,name,active").eq("org_id", org).eq("active", true).order("name", {ascending:true}),
+    sb.from("trucks").select("truck_id,name,active").eq("org_id", org).eq("active", true).order("name", {ascending:true})
+  ]);
+
+  if(custQ.error){ console.error("customers load error:", custQ.error); UI.toast("Couldn't load customers."); return; }
+  if(typeQ.error){ console.error("job_types load error:", typeQ.error); UI.toast("Couldn't load job types."); return; }
+  if(truckQ.error){ console.error("trucks load error:", truckQ.error); /* trucks are optional */ }
+
+  state._jobCreate = state._jobCreate || {};
+  state._jobCreate.customers = custQ.data || [];
+  state._jobCreate.jobTypes  = typeQ.data || [];
+  state._jobCreate.trucks    = (truckQ && truckQ.data) ? truckQ.data : [];
+  state._jobCreate.customerLabelToId = new Map();
+  state._jobCreate.fieldLabelToId = new Map();
+
+  // ---- Customer searchable dropdown (datalist) ----
+  const custList = document.getElementById("jobCustomerList");
+  if(custList){
+    custList.innerHTML = "";
+    state._jobCreate.customerLabelToId.clear();
+    (state._jobCreate.customers||[]).forEach(c=>{
+      const id = c.customer_id;
+      const short = String(id||"").slice(-6).toUpperCase();
+      const label = `${c.name || "(Unnamed)"}${c.phone ? (" • "+c.phone) : ""} • ${short}`;
+      state._jobCreate.customerLabelToId.set(label, id);
+      const opt = document.createElement("option");
+      opt.value = label;
+      custList.appendChild(opt);
+    });
+  }
+
+  // Default to first customer (if any) so Field list can populate
+  const firstCust = state._jobCreate.customers?.[0] || null;
+  if(firstCust && custSearch && custHidden){
+    const short = String(firstCust.customer_id||"").slice(-6).toUpperCase();
+    const label = `${firstCust.name || "(Unnamed)"}${firstCust.phone ? (" • "+firstCust.phone) : ""} • ${short}`;
+    custSearch.value = label;
+    custHidden.value = firstCust.customer_id;
+  }
+
+  // ---- Job Type (plain select) ----
+  const jtSel = document.getElementById("jobType");
+  if(jtSel){
+    jtSel.innerHTML = "";
+    (state._jobCreate.jobTypes||[]).forEach(jt=>{
+      const opt = document.createElement("option");
+      opt.value = jt.job_type_id;
+      opt.textContent = jt.name || jt.job_type_id;
+      opt.dataset.name = jt.name || jt.job_type_id;
+      jtSel.appendChild(opt);
+    });
+    // default first
+    if(jtSel.options.length>0) jtSel.selectedIndex = 0;
+  }
+
+  // ---- Trucks (optional) ----
+  const trSel = document.getElementById("jobTruck");
+  if(trSel){
+    trSel.innerHTML = "";
+    const trucks = state._jobCreate.trucks || [];
+    const optNone = document.createElement("option");
+    optNone.value = "";
+    optNone.textContent = "(No truck / not assigned yet)";
+    trSel.appendChild(optNone);
+
+    trucks.forEach(t=>{
+      const opt = document.createElement("option");
+      opt.value = t.truck_id;
+      opt.textContent = t.name || t.truck_id;
+      trSel.appendChild(opt);
+    });
+
+    // Auto-select from URL param or storage (so you don't have to pick every time)
+    const url = new URL(location.href);
+    const activeTruckId = url.searchParams.get("truck_id") || url.searchParams.get("truck") || localStorage.getItem("ACTIVE_TRUCK_ID") || "";
+    if(activeTruckId){
+      trSel.value = activeTruckId;
+      // Keep editable if you want; comment next line if you'd rather lock it
+      // trSel.disabled = true;
+    }
+  }
+
+  // ---- Load fields for selected customer ----
+  await refreshJobFieldsForSelectedCustomer();
+
+  updateJobNumberPreview();
   UI.openModal("modalJob");
 };
 
-document.getElementById("jobCustomer").addEventListener("change", (e)=>{
-  fillFieldSelect("jobField", e.target.value);
+// Customer searchable dropdown (datalist)
+document.getElementById("jobCustomerSearch")?.addEventListener("change", async (e)=>{
+  const label = e.target.value || "";
+  const id = state._jobCreate?.customerLabelToId?.get(label) || "";
+  document.getElementById("jobCustomer").value = id;
+  // Reset field selection whenever customer changes
+  document.getElementById("jobField").value = "";
+  const fs = document.getElementById("jobFieldSearch"); if(fs) fs.value = "";
+  await refreshJobFieldsForSelectedCustomer();
+});
+
+document.getElementById("jobFieldSearch")?.addEventListener("change", (e)=>{
+  const label = e.target.value || "";
+  const id = state._jobCreate?.fieldLabelToId?.get(label) || "";
+  document.getElementById("jobField").value = id;
 });
 
 document.getElementById("btnSaveJob").onclick = async ()=>{
-  const customerId = document.getElementById("jobCustomer").value;
-  const fieldId = document.getElementById("jobField").value;
-  const type = document.getElementById("jobType").value;
+  const customerId = document.getElementById("jobCustomer")?.value || "";
+  const fieldId = document.getElementById("jobField")?.value || "";
+  const jobTypeId = document.getElementById("jobType")?.value || "";
+  const jobTypeName = getSelectedJobTypeName();
   const description = (document.getElementById("jobDescription")?.value || "").trim();
-  const notesOffice = document.getElementById("jobNotes").value || "";
+  const notesOffice = document.getElementById("jobNotes")?.value || "";
 
   if(!customerId){ UI.toast("Pick a customer."); return; }
   if(!fieldId){ UI.toast("Pick a field."); return; }
+  if(!jobTypeId){ UI.toast("Pick a job type."); return; }
 
-  // Job Title is automatic (example: SC1000)
-  const jobCode = jobTypePrefix(type) + pad4(db.meta.jobSeq++);
-  const title = jobCode; // keep legacy "title" for any older UI bits
+  // Job Number is automatic (example: PI1000)
+  const jobCode = jobTypePrefix(jobTypeName) + pad4(db.meta.jobSeq++);
+  const title = jobCode;
 
-  // Keep existing local behavior
-  addJob({customerId, fieldId, type, jobCode, title, description, notesOffice});
+  // Keep existing local behavior (local demo state)
+  addJob({customerId, fieldId, type: jobTypeName, jobCode, title, description, notesOffice});
   updateJobNumberPreview();
   UI.closeModal("modalJob");
   state.filterStatus = "open";
@@ -3512,27 +3688,34 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
 
   // ---- SUPABASE INSERT (office job create) ----
   try{
-    const sb = window.sb;
-if(!sb){ console.warn("Supabase client not ready."); return; }
+    const sb = (getSupabase ? getSupabase() : (window.sb || null));
+    if(!sb){ console.warn("Supabase client not ready."); return; }
 
-const truckId = document.getElementById("jobTruck")?.value || null;
-const jt = (db.settings.jobTypes||[]).find(x=>x.name===type);
+    const truckId = document.getElementById("jobTruck")?.value || null;
+    const t = nowISO();
+    const job_id = uid("job");
 
-const t = nowISO();
-const job_id = uid("job");
+    const payload = {
+      org_id: window.SUPABASE_ORG_ID || "pracht",
+      job_id: job_id,
+      customer_id: customerId,
+      field_id: fieldId,
+      truck_id: truckId || null,
+      assigned_tech_id: null,
+      job_type_id: jobTypeId,
+      status: "open",
+      description: description || "",
+      created_at: t,
+      updated_at: t
+    };
 
-const payload = {
-  org_id: window.ORG_ID || "pracht",
-  job_id: job_id,
-  customer_id: customerId,
-  field_id: fieldId,
-  truck_id: truckId,
-  assigned_tech_id: null,
-  job_type_id: "inspection",
-  status: "open",
-  description: description || "",
-  created_at: t,
-  updated_at: t
+    const { error: jobErr } = await sb.from("jobs").insert([payload]);
+    if(jobErr) console.error("jobs insert error:", jobErr);
+    else console.log("job saved to supabase:", job_id);
+
+  } catch (err) {
+    console.error("jobs insert exception:", err);
+  }
 };
 
 const { error: jobErr } = await sb.from("jobs").insert([payload]);
