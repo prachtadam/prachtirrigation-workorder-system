@@ -3506,7 +3506,7 @@ document.getElementById("btnCreateJob").onclick = ()=>{
   if(db.customers.length===0){ UI.toast("Add a customer first (Menu → Customers)."); return; }
   if(db.fields.length===0){ UI.toast("Add a field first (Customer file → Add Field)."); return; }
 
-  fillCustomerSelect("jobCustomer");
+  loadCustomersFromSupabase("jobCustomer");
   const custId = document.getElementById("jobCustomer").value;
   fillFieldSelect("jobField", custId);
 
@@ -3625,7 +3625,7 @@ document.getElementById("btnCustomerEdit").onclick = ()=>{
 document.getElementById("btnCustomerAddField").onclick = ()=>{
   const custId = state.selectedCustomerId;
   if(!custId) return;
-  fillCustomerSelect("fieldCustomer");
+  loadCustomersFromSupabase("fieldCustomer");
   document.getElementById("fieldCustomer").value = custId;
 
   document.getElementById("fieldName").value = "";
