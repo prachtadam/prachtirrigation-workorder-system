@@ -2480,15 +2480,36 @@ function updateJobStatusOffice(jobId, newStatus){
    CRUD base
 ===================== */
 function addCustomer(payload){
+  const customer_id = uid("cust");
+
+  // local save (keep your current behavior)
   db.customers.push({
-    id: uid("cust"),
+    id: customer_id,
     createdAt: nowISO(),
     updatedAt: nowISO(),
     customer: payload.customer,
     billing: payload.billing
   });
+
   saveDB(db);
+
+  // ---- SUPABASE INSERT (customer create) ----
+  if (window.sb) {
+    sb.from("customers").insert([{
+      customer_id: customer_id,
+      org_id: window.ORG_ID || "pracht",
+      customer: payload.customer,
+      billing: payload.billing,
+      created_at: nowISO(),
+      updated_at: nowISO()
+    }]).then(({ error }) => {
+      if (error) console.error("customer insert error:", error);
+      else console.log("customer saved to supabase");
+    });
+  }
 }
+
+
 function addField(payload){
   db.fields.push({
     id: uid("field"),
