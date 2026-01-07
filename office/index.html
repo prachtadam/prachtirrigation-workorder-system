@@ -1270,7 +1270,6 @@ function migrateDB(raw){
   db.settings.trucks = Array.isArray(db.settings.trucks) ? db.settings.trucks : [];
   db.settings.truckStock = db.settings.truckStock || {};
   db.settings.truckTools = db.settings.truckTools || {};
-  db.settings.jobTypes = Array.isArray(db.settings.jobTypes) ? db.settings.jobTypes : defaultDB().settings.jobTypes;
   db.settings.techs = Array.isArray(db.settings.techs) ? db.settings.techs : [];
   db.settings.helpers = Array.isArray(db.settings.helpers) ? db.settings.helpers : [];
   db.settings.assignments = Array.isArray(db.settings.assignments) ? db.settings.assignments : [];
