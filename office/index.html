@@ -406,7 +406,8 @@
 
   <!-- Supabase (shared with Tech App) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script>
+  <script type="module">
+    import {supabase} from "../shared/supabase.js";
      window.SUPABASE_URL = "https://inwrnzkzseuymfzrpocn.supabase.co";
      window.SUPABASE_ANON_KEY = "sb_publishable_81elBWnKMo2ouw53vYQVUQ_Iyo3HHg1";
      window.SUPABASE_ORG_ID = "pracht";
@@ -415,12 +416,7 @@
   <script type="module">
   import { supabase } from "../shared/supabase.js";
 
-  const { data, error } = await supabase
-    .from("customers")
-    .select("*")
-    .limit(1);
 
-  console.log("Supabase test:", data, error);
 </script>
 
 
