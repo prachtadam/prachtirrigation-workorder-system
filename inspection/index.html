@@ -347,7 +347,14 @@
       color: #fff;
     }
 
-    .btn-remove-tower {
+    
+    .btn-add-end-tower {
+      background: #6f42c1;
+      border: 1px solid #5a36a5;
+      color: #fff;
+    }
+    .btn-add-end-tower:hover { filter: brightness(0.95); }
+.btn-remove-tower {
       background: #f44336;
       color: #fff;
     }
@@ -582,7 +589,6 @@
   </style>
   <script type="module" src="../shared/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
-  <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 
 </head>
 <body>
@@ -1207,11 +1213,18 @@ let towerCounter = 0;
 
 
       const addBtn = sectionEl.querySelector('.btn-add-tower');
+      const addEndBtn = sectionEl.querySelector('.btn-add-end-tower');
       const removeBtn = sectionEl.querySelector('.btn-remove-tower');
 
       addBtn.addEventListener('click', () => {
         addTower();
       });
+
+      if (addEndBtn) {
+        addEndBtn.addEventListener('click', () => {
+          addEndTower();
+        });
+      }
 
       removeBtn.addEventListener('click', () => {
         const sections = Array.from(
@@ -1228,15 +1241,87 @@ let towerCounter = 0;
       });
     }
 
+    let hasEndTower = false;
+    let endTowerSectionEl = null;
+    let endTowerId = null;
+
     function addTower() {
       towerCounter += 1;
       const cloneFrag = towerTemplate.content.cloneNode(true);
       const section = cloneFrag.querySelector('.tower-section');
-      towersContainer.appendChild(section);
+
+      // If an end tower exists, always insert new towers BEFORE it so end tower stays last
+      if (hasEndTower && endTowerSectionEl && endTowerSectionEl.parentNode === towersContainer) {
+        towersContainer.insertBefore(section, endTowerSectionEl);
+      } else {
+        towersContainer.appendChild(section);
+      }
+
       initTowerSection(section, towerCounter);
     }
 
-    // Initialize first tower
+    function addEndTower() {
+      if (hasEndTower) {
+        alert('End tower already added.');
+        return;
+      }
+      hasEndTower = true;
+
+      towerCounter += 1;
+      const cloneFrag = towerTemplate.content.cloneNode(true);
+      const section = cloneFrag.querySelector('.tower-section');
+
+      section.classList.add('end-tower');
+      section.dataset.towerType = 'end';
+
+      // Update title
+      const titleEl = section.querySelector('.section-title');
+      if (titleEl) {
+        titleEl.childNodes.forEach(n => {
+          if (n.nodeType === Node.TEXT_NODE) n.textContent = 'End Tower Inspection – Tower ';
+        });
+      }
+      const numSpan = section.querySelector('.tower-number');
+      if (numSpan) numSpan.textContent = String(towerCounter);
+
+      // Remove Tower Boot condition row
+      const bootGroup = section.querySelector('.tower-cond-buttons[data-cond-type="boot"]');
+      if (bootGroup) {
+        const row = bootGroup.closest('.tower-cond-row');
+        if (row) row.remove();
+      }
+
+      // Add Cleaned Sand Trap checkbox row (after tower box row)
+      const conditions = section.querySelector('.tower-conditions');
+      if (conditions) {
+        const sandRow = document.createElement('div');
+        sandRow.className = 'tower-cond-row';
+        sandRow.innerHTML = `
+          <div class="tower-cond-label">Cleaned Sand Trap</div>
+          <div class="tower-cond-buttons" data-cond-type="sandtrap" style="display:flex;align-items:center;gap:10px;">
+            <label style="display:flex;align-items:center;gap:8px;color:#495057;font-weight:600;">
+              <input type="checkbox" class="end-sand-trap" />
+              Yes
+            </label>
+          </div>
+        `;
+        // insert after the first existing cond-row (typically Tower Box) if present
+        const firstRow = conditions.querySelector('.tower-cond-row');
+        if (firstRow && firstRow.nextSibling) {
+          conditions.insertBefore(sandRow, firstRow.nextSibling);
+        } else {
+          conditions.appendChild(sandRow);
+        }
+      }
+
+      // Append at end
+      towersContainer.appendChild(section);
+      endTowerSectionEl = section;
+      endTowerId = towerCounter;
+
+      initTowerSection(section, towerCounter);
+    }
+// Initialize first tower
     addTower();
 
     // ---------- GEOLOCATION ----------
@@ -1295,10 +1380,16 @@ let towerCounter = 0;
         const commentEl = section.querySelector('.tower-comment');
         const towerComment = commentEl ? commentEl.value : '';
 
+        const isEndTower = section.dataset.towerType === 'end';
+        const sandTrapEl = section.querySelector('.end-sand-trap');
+        const cleanedSandTrap = sandTrapEl ? !!sandTrapEl.checked : false;
+
         const towerData = {
           id: towerId,
+          towerType: isEndTower ? 'end' : 'standard',
           comment: towerComment,
-          towerBoot: (towerMeta[towerId] && towerMeta[towerId].boot) ? towerMeta[towerId].boot : null,
+          cleanedSandTrap: isEndTower ? cleanedSandTrap : null,
+          towerBoot: (!isEndTower && towerMeta[towerId] && towerMeta[towerId].boot) ? towerMeta[towerId].boot : null,
           towerBox: (towerMeta[towerId] && towerMeta[towerId].box) ? towerMeta[towerId].box : null,
           components: selections[towerId] || {}
         };
@@ -1316,367 +1407,6 @@ let towerCounter = 0;
       return status || 'Unknown';
     }
 
-
-    // ===================== PDF (pdf-lib) PROGRAMMATIC REPORTS =====================
-    // We do NOT screenshot HTML. We build PDFs from gathered inspection data.
-    // This guarantees repeatable tower cards and prevents page breaks inside a card.
-
-    function _pdfRgb(hex) {
-      const h = String(hex || "#000000").replace("#", "").trim();
-      const r = parseInt(h.slice(0, 2), 16) / 255;
-      const g = parseInt(h.slice(2, 4), 16) / 255;
-      const b = parseInt(h.slice(4, 6), 16) / 255;
-      return PDFLib.rgb(r, g, b);
-    }
-
-    function _wrapLines(font, size, text, maxWidth) {
-      const words = String(text ?? "").split(/\s+/).filter(Boolean);
-      const lines = [];
-      let line = "";
-      for (const w of words) {
-        const test = line ? (line + " " + w) : w;
-        if (font.widthOfTextAtSize(test, size) <= maxWidth) line = test;
-        else {
-          if (line) lines.push(line);
-          line = w;
-        }
-      }
-      if (line) lines.push(line);
-      return lines.length ? lines : [""];
-    }
-
-    function _statusToPill(status) {
-      if (status === "good") return { label: "OK", fill: "#2f9e44", text: "#ffffff", warn: false };
-      if (status === "warning") return { label: "ATTN", fill: "#ffd43b", text: "#111111", warn: true };
-      if (status === "bad") return { label: "REPAIR", fill: "#c92a2a", text: "#ffffff", warn: true };
-      return { label: "—", fill: "#adb5bd", text: "#111111", warn: false };
-    }
-
-    function _drawText(page, x, y, str, { size = 10, font, color = "#111111" } = {}) {
-      page.drawText(String(str ?? ""), { x, y, size, font, color: _pdfRgb(color) });
-    }
-
-    function _drawPill(page, x, yTop, text, fillHex, textHex, font, size = 9) {
-      const padX = 6, padY = 3;
-      const w = font.widthOfTextAtSize(text, size) + padX * 2;
-      const h = size + padY * 2;
-      page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: _pdfRgb(fillHex) });
-      _drawText(page, x + padX, yTop - h + padY, text, { size, font, color: textHex });
-      return { w, h };
-    }
-
-    function _drawWarnTriangle(page, x, y, size, font) {
-      const fill = _pdfRgb("#ffd43b");
-      const black = _pdfRgb("#111111");
-      page.drawPolygon([{ x, y }, { x: x + size, y }, { x: x + size / 2, y: y + size }], { color: fill });
-      page.drawText("!", { x: x + size * 0.38, y: y + size * 0.2, size: size * 0.7, font, color: black });
-    }
-
-    function _estimateTowerCardHeight(tower, font) {
-      const base = 86; // header + status rows
-      const compLines = tower?.components ? Object.keys(tower.components).length : 0;
-      const compHeight = (Math.max(1, compLines) * 12) + 22;
-
-      const comment = tower?.comment || "";
-      const commentLines = _wrapLines(font, 9, comment, 612 - 72 - 48);
-      const commentHeight = (Math.max(1, commentLines.length) * 11) + 18;
-
-      const endExtra = tower?.towerType === "end" ? 18 : 0;
-      return base + compHeight + commentHeight + endExtra;
-    }
-
-    function _newPage(doc) {
-      return doc.addPage([612, 792]); // letter
-    }
-
-    function _drawHeader(page, boldFont) {
-      page.drawRectangle({ x: 0, y: 792 - 64, width: 612, height: 64, color: _pdfRgb("#1865ab") });
-      _drawText(page, 36, 792 - 42, "Pracht Irrigation – Pivot Inspection Report", { size: 16, font: boldFont, color: "#ffffff" });
-    }
-
-    function _drawSectionBar(page, yTop, title, boldFont) {
-      page.drawRectangle({ x: 36, y: yTop - 22, width: 612 - 72, height: 22, color: _pdfRgb("#1865ab") });
-      _drawText(page, 46, yTop - 16, title, { size: 11, font: boldFont, color: "#ffffff" });
-      return yTop - 30;
-    }
-
-    function _drawInfoCard(page, yTop, data, boldFont, regularFont) {
-      const x = 36, w = 612 - 72, h = 120;
-      page.drawRectangle({ x, y: yTop - h, width: w, height: h, color: _pdfRgb("#f1f3f5"), borderColor: _pdfRgb("#dee2e6"), borderWidth: 1 });
-
-      _drawText(page, x + 12, yTop - 22, "Job / Customer Info", { size: 12, font: boldFont, color: "#111111" });
-
-      const items = [
-        ["Customer", data.customerName],
-        ["Field", data.fieldName],
-        ["Location", data.location],
-        ["Brand", data.systemBrand],
-        ["Inspection Date", data.inspectionDate],
-        ["Machine Hours", data.machineHours],
-        ["Inspected By", data.inspectedBy],
-        ["Start", data.startTime],
-        ["End", data.endTime],
-      ];
-
-      const colW = (w - 24) / 3;
-      let i = 0;
-      for (const [label, val] of items) {
-        const col = i % 3;
-        const row = Math.floor(i / 3);
-        const fx = x + 12 + col * colW;
-        const fy = yTop - 44 - row * 26;
-        _drawText(page, fx, fy, label + ":", { size: 9, font: regularFont, color: "#495057" });
-        _drawText(page, fx + 72, fy, val || "", { size: 9, font: regularFont, color: "#111111" });
-        i++;
-      }
-      return yTop - h - 16;
-    }
-
-    function _drawSystemNotes(page, yTop, data, boldFont, regularFont) {
-      let y = _drawSectionBar(page, yTop, "System Notes", boldFont);
-      const x = 36, w = 612 - 72;
-      const rows = [
-        ["Well Motor Oil", data.notes?.wellMotorOil],
-        ["Drip Oil System", data.notes?.dripOilSystem],
-        ["Well Panel", data.notes?.wellPanel],
-        ["Water Supply", data.notes?.waterSupply],
-        ["Main Control Panel", data.notes?.mainControlPanel],
-        ["Pivot Foundation", data.notes?.pivotFoundation],
-        ["Anchoring System", data.notes?.anchoringSystem],
-        ["Center Point Structure", data.notes?.centerPointStructure],
-        ["Collector Ring", data.notes?.collectorRing],
-        ["Tower Boot Note", data.notes?.towerBootNote],
-      ];
-
-      const boxH = rows.length * 14 + 18;
-      page.drawRectangle({ x, y: y - boxH, width: w, height: boxH, color: _pdfRgb("#ffffff"), borderColor: _pdfRgb("#dee2e6"), borderWidth: 1 });
-      let yy = y - 18;
-      for (const [lbl, val] of rows) {
-        _drawText(page, x + 10, yy, lbl + ":", { size: 9, font: regularFont, color: "#111111" });
-        _drawText(page, x + 165, yy, val || "", { size: 9, font: regularFont, color: "#495057" });
-        yy -= 14;
-      }
-      return y - boxH - 14;
-    }
-
-    function _drawTowerCard(page, yTop, tower, boldFont, regularFont) {
-      const x = 36, w = 612 - 72;
-      const cardH = _estimateTowerCardHeight(tower, regularFont);
-
-      page.drawRectangle({ x, y: yTop - cardH, width: w, height: cardH, color: _pdfRgb("#ffffff"), borderColor: _pdfRgb("#dee2e6"), borderWidth: 1 });
-
-      const title = (tower?.towerType === "end") ? `End Tower ${tower.id ?? ""}` : `Tower ${tower.id ?? ""}`;
-      _drawText(page, x + 12, yTop - 20, title, { size: 12, font: boldFont, color: "#111111" });
-
-      const pillY = yTop - 34;
-      const box = _statusToPill(tower?.towerBox);
-      const p1 = _drawPill(page, x + 12, pillY, `BOX: ${box.label}`, box.fill, box.text, boldFont, 9);
-      if (box.warn) _drawWarnTriangle(page, x + 12 + p1.w + 6, pillY - 12, 12, boldFont);
-
-      let y = yTop - 54;
-
-      if (tower?.towerType !== "end") {
-        const boot = _statusToPill(tower?.towerBoot);
-        const p2 = _drawPill(page, x + 12, y, `BOOT: ${boot.label}`, boot.fill, boot.text, boldFont, 9);
-        if (boot.warn) _drawWarnTriangle(page, x + 12 + p2.w + 6, y - 12, 12, boldFont);
-        y -= 20;
-      } else {
-        const checked = tower?.cleanedSandTrap ? "☑" : "☐";
-        _drawText(page, x + 12, y - 10, `${checked} Cleaned Sand Trap`, { size: 10, font: regularFont, color: "#111111" });
-        y -= 20;
-      }
-
-      _drawText(page, x + 12, y - 10, "Items:", { size: 10, font: boldFont, color: "#111111" });
-      y -= 18;
-
-      const comps = tower?.components ? Object.entries(tower.components) : [];
-      if (!comps.length) {
-        _drawText(page, x + 24, y - 10, "—", { size: 9, font: regularFont, color: "#868e96" });
-        y -= 14;
-      } else {
-        for (const [k, v] of comps) {
-          const line = `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`;
-          const lines = _wrapLines(regularFont, 9, line, w - 48);
-          for (const ln of lines) {
-            _drawText(page, x + 24, y - 10, ln, { size: 9, font: regularFont, color: "#495057" });
-            y -= 12;
-          }
-          y -= 2;
-        }
-      }
-
-      _drawText(page, x + 12, y - 10, "Comments:", { size: 10, font: boldFont, color: "#111111" });
-      y -= 16;
-
-      const commentLines = _wrapLines(regularFont, 9, tower?.comment || "", w - 36);
-      for (const ln of commentLines) {
-        _drawText(page, x + 24, y - 10, ln, { size: 9, font: regularFont, color: "#495057" });
-        y -= 12;
-      }
-
-      return yTop - cardH - 12;
-    }
-
-    async function buildCustomerPdfBytes(data) {
-      if (!window.PDFLib) throw new Error("PDFLib not loaded. Check the pdf-lib script include.");
-      const { PDFDocument, StandardFonts } = PDFLib;
-
-      const doc = await PDFDocument.create();
-      const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
-      const regularFont = await doc.embedFont(StandardFonts.Helvetica);
-
-      let page = _newPage(doc);
-      _drawHeader(page, boldFont);
-
-      let y = 792 - 78;
-      y = _drawInfoCard(page, y, data, boldFont, regularFont);
-      y = _drawSystemNotes(page, y, data, boldFont, regularFont);
-      y = _drawSectionBar(page, y, "Tower Inspections", boldFont);
-
-      const towers = Array.isArray(data.towers) ? data.towers : [];
-      for (const tower of towers) {
-        const cardH = _estimateTowerCardHeight(tower, regularFont);
-
-        // KEEP TOGETHER: if card won't fit, start a new page first.
-        if (y - cardH < 60) {
-          page = _newPage(doc);
-          _drawHeader(page, boldFont);
-          y = 792 - 78;
-          y = _drawSectionBar(page, y, "Tower Inspections (cont.)", boldFont);
-        }
-
-        y = _drawTowerCard(page, y, tower, boldFont, regularFont);
-      }
-
-      return await doc.save();
-    }
-
-    async function buildTechPdfBytes(data) {
-      if (!window.PDFLib) throw new Error("PDFLib not loaded. Check the pdf-lib script include.");
-      const { PDFDocument, StandardFonts } = PDFLib;
-
-      const doc = await PDFDocument.create();
-      const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
-      const regularFont = await doc.embedFont(StandardFonts.Helvetica);
-
-      let page = _newPage(doc);
-      _drawHeader(page, boldFont);
-
-      let y = 792 - 78;
-      y = _drawInfoCard(page, y, data, boldFont, regularFont);
-      y = _drawSectionBar(page, y, "Tech Checklist (All Checks)", boldFont);
-
-      const towers = Array.isArray(data.towers) ? data.towers : [];
-      const lines = [];
-
-      for (const t of towers) {
-        const title = (t?.towerType === "end") ? `End Tower ${t.id ?? ""}` : `Tower ${t.id ?? ""}`;
-        lines.push(title);
-
-        const box = _statusToPill(t?.towerBox);
-        lines.push(`  Tower Box: ${box.label}`);
-
-        if (t?.towerType !== "end") {
-          const boot = _statusToPill(t?.towerBoot);
-          lines.push(`  Tower Boot: ${boot.label}`);
-        } else {
-          lines.push(`  Cleaned Sand Trap: ${t?.cleanedSandTrap ? "Yes" : "No"}`);
-        }
-
-        const comps = t?.components ? Object.entries(t.components) : [];
-        if (!comps.length) lines.push("  (no components recorded)");
-        else for (const [k, v] of comps) lines.push(`  ${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
-
-        if (t?.comment) lines.push(`  Notes: ${t.comment}`);
-        lines.push("");
-      }
-
-      for (const raw of lines) {
-        const wrap = _wrapLines(regularFont, 10, raw, 612 - 72 - 12);
-        for (const ln of wrap) {
-          if (y < 70) {
-            page = _newPage(doc);
-            _drawHeader(page, boldFont);
-            y = 792 - 78;
-            y = _drawSectionBar(page, y, "Tech Checklist (cont.)", boldFont);
-          }
-
-          let color = "#111111";
-          if (ln.includes("OK")) color = "#2f9e44";
-          if (ln.includes("ATTN")) color = "#b08900";
-          if (ln.includes("REPAIR")) color = "#c92a2a";
-
-          _drawText(page, 48, y - 10, ln, { size: 10, font: regularFont, color });
-          y -= 14;
-        }
-      }
-
-      return await doc.save();
-    }
-
-    async function generateCustomerPdfBytes() {
-      return await buildCustomerPdfBytes(gatherFormData());
-    }
-
-    async function generateTechPdfBytes() {
-      return await buildTechPdfBytes(gatherFormData());
-    }
-
-    function _getJobContext() {
-      const params = new URLSearchParams(location.search);
-      const jobId = params.get("job_id") || params.get("jobId") || null;
-      const orgId = params.get("org_id") || params.get("orgId") || params.get("org") || null;
-      return { jobId, orgId };
-    }
-
-    async function uploadPdfToSupabase({ jobId, orgId, kind, bytes }) {
-      const bucket = window.JOB_FILES_BUCKET || "job-files";
-      const sb =
-        (window.getSupabaseClient && window.getSupabaseClient()) ||
-        window.supabaseClient ||
-        window.supabase;
-
-      if (!sb) throw new Error("Supabase client not found. Check ../shared/supabase.js");
-
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      const filename = kind === "tech" ? `inspection-tech-${ts}.pdf` : `inspection-customer-${ts}.pdf`;
-      const path = `jobs/${jobId}/${filename}`;
-
-      const blob = new Blob([bytes], { type: "application/pdf" });
-      const up = await sb.storage.from(bucket).upload(path, blob, { contentType: "application/pdf", upsert: true });
-      if (up.error) throw up.error;
-
-      const pub = sb.storage.from(bucket).getPublicUrl(path);
-      const publicUrl = pub?.data?.publicUrl || null;
-
-      try {
-        const payload = {
-          org_id: orgId || null,
-          job_id: jobId,
-          file_name: filename,
-          storage_bucket: bucket,
-          storage_path: path,
-          public_url: publicUrl,
-          category: "inspection",
-          file_type: kind === "tech" ? "tech_report" : "customer_report"
-        };
-        const ins = await sb.from("job_files").insert([payload]);
-        if (ins.error) console.warn("job_files insert failed (schema mismatch?):", ins.error);
-      } catch (e) {
-        console.warn("job_files attach skipped:", e);
-      }
-
-      return { bucket, path, publicUrl, filename };
-    }
-
-    // Optional: keep this name for backwards compatibility (returns PDF bytes)
-    async function generateReportPDF(type = "customer") {
-      if (type === "tech") return await generateTechPdfBytes();
-      return await generateCustomerPdfBytes();
-    }
-    window.generateReportPDF = generateReportPDF;
-    window.generateCustomerPdfBytes = generateCustomerPdfBytes;
-    window.generateTechPdfBytes = generateTechPdfBytes;
     // ---------- CUSTOMER REPORTS → PDF WITH COLORED PILLS ----------
 
     function generateCustomerReportHtml() {
@@ -2116,34 +1846,16 @@ let towerCounter = 0;
     }
 
     // ---------- SUBMIT (IN-APP) ----------
-    btnSubmitReports.addEventListener('click', async () => {
-      // Build both reports and show them inside the app
+    btnSubmitReports.addEventListener('click', () => {
+      // Build both reports and show them inside the app (no popups, no downloads)
       customerReportView.innerHTML = '<div class="report-page">' + generateCustomerReportHtml() + '</div>';
       techReportView.innerHTML = generateTechReportHtml();
+
       setActiveTab('customer');
-      openReportModal();
+     openReportModal();
+});
 
-      // Behind the scenes: generate PDFs + upload + attach to job (no downloads)
-      try {
-        const { jobId, orgId } = _getJobContext();
-        if (!jobId) {
-          console.warn("No job_id/jobId in URL. PDFs not attached. Add ?job_id=... when opening inspection from the Tech App.");
-          return;
-        }
-
-        const customerBytes = await generateCustomerPdfBytes();
-        const techBytes = await generateTechPdfBytes();
-
-        await uploadPdfToSupabase({ jobId, orgId, kind: "customer", bytes: customerBytes });
-        await uploadPdfToSupabase({ jobId, orgId, kind: "tech", bytes: techBytes });
-
-        console.log("Inspection PDFs uploaded and attached to job:", jobId);
-      } catch (err) {
-        console.error("PDF upload/attach failed:", err);
-        alert("Submit completed, but PDF attach failed. Check console for details.");
-      }
-    });
-
+   
 </script>
   <script type="module">
   // Generate a PDF from a report container
