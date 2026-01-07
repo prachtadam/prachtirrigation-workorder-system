@@ -3277,6 +3277,34 @@ async function cloudFetchOOS(){
   document.getElementById("pillOOS").textContent = String(CLOUD.oos.length);
   return CLOUD.oos;
 }
+ async function loadCustomersFromSupabase(elId){
+  const sb = getSupabase();
+  if(!sb){ toast("Supabase not configured yet (Customers)."); return; }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("customers")
+    .select("id, name")
+    .eq("org_id", org)
+    .order("name");
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Customers).");
+    return;
+  }
+
+  const el = document.getElementById(elId);
+  el.innerHTML = `<option value="">Select customer</option>`;
+
+  (data || []).forEach(c=>{
+    const opt = document.createElement("option");
+    opt.value = c.id;
+    opt.textContent = c.name;
+    el.appendChild(opt);
+  });
+}
+
  async function loadJobTypesFromSupabase(){
   const sb = getSupabase();
   if(!sb){ toast("Supabase not configured yet (Job Types)."); return; }
@@ -3299,7 +3327,7 @@ async function cloudFetchOOS(){
 
   (data || []).forEach(jt=>{
     const opt = document.createElement("option");
-    opt.value = jt.job_types_id;
+    opt.value = jt.job_type_id;
     opt.textContent = jt.name;
     el.appendChild(opt);
   });
