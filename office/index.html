@@ -411,6 +411,9 @@
 
   <!-- Supabase (shared with Tech App) -->
 <script>
+ window.db = window.db || {};
+db.fields = [];
+
  console.log("OFFICE BUILD:", "Jan-7-2026", "line-check");
 
   // Shared Supabase config (Office Dashboard)
@@ -1263,7 +1266,7 @@ function migrateDB(raw){
   db.meta = db.meta || { createdAt: nowISO(), updatedAt: nowISO(), isPreload:false, jobSeq: 1000 };
   if(typeof db.meta.jobSeq !== 'number') db.meta.jobSeq = 1000;
   db.customers = Array.isArray(db.customers) ? db.customers : [];
-  db.fields = Array.isArray(db.fields) ? db.fields : [];
+ 
   db.jobs = Array.isArray(db.jobs) ? db.jobs : [];
   db.settings = db.settings || defaultDB().settings;
 
@@ -1300,7 +1303,7 @@ function migrateDB(raw){
     };
   });
 
-  db.fields = db.fields.map(f=>({
+  const fields = db.fields.map(f => ({
     id: f.id || uid("field"),
     customerId: f.customerId || "",
     createdAt: f.createdAt || nowISO(),
@@ -2642,7 +2645,7 @@ function partialImportFromJSON(str, opts){
 
   // 2) Fields
   if(wantFields){
-    db.fields = Array.isArray(parsed.fields) ? parsed.fields : [];
+    const parsedFields = Array.isArray(parsed.fields) ? parsed.fields : [];
   }
 
   // If customers/fields changed, prune jobs to prevent broken references
