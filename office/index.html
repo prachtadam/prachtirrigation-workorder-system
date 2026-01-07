@@ -2545,24 +2545,26 @@ async function addField(payload){
     const sb = window.sb;
     if(!sb){ console.warn("Supabase client not ready (field)."); return field_id; }
 
-    const row = {
-      org_id: window.ORG_ID || "pracht",
-      field_id: field_id,
-      customer_id: payload.customerId,      // <-- FK to customers.customer_id
-      name: payload.name,
-      brand: payload.brand || null,
-      power_source: payload.powerSource || null,
-      serial_number: payload.serialNumber || null,
-      tower_count: payload.towerCount ?? null,
-      lat: payload.lat ?? null,
-      lng: payload.lng ?? null,
-      sprinkler_package_number: payload.sprinklerPackageNumber || null,
-      has_telemetry: !!payload.hasTelemetry,
-      telemetry_make: payload.telemetryMake || null,
-      telemetry_serial: payload.telemetrySerial || null,
-      notes: payload.notes || null,
-      created_at: t,
-      updated_at: t
+  const row = {
+  org_id: window.ORG_ID || "pracht",
+  field_id: field_id,
+  customer_id: payload.customerId,
+  name: payload.name,
+  brand: payload.brand || null,
+  power_source: payload.powerSource || null,
+  serial_number: payload.serialNumber || null,
+  tower_count: (payload.towerCount === "" || payload.towerCount == null) ? null : Number(payload.towerCount),
+  lat: (payload.lat === "" || payload.lat == null) ? null : Number(payload.lat),
+  lng: (payload.lng === "" || payload.lng == null) ? null : Number(payload.lng),
+  sprinkler_package_number: payload.sprinklerPackageNumber || null,
+  has_telemetry: !!payload.hasTelemetry,
+  telemetry_make: payload.telemetryMake || null,
+  telemetry_serial: payload.telemetrySerial || null,
+  notes: payload.notes || null,
+  created_at: t,
+  updated_at: t
+};
+
     };
 
     const { error: fieldErr } = await sb
