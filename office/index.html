@@ -412,6 +412,17 @@
      window.SUPABASE_ORG_ID = "pracht";
   </script>
 <script type="module" src="../shared/supabase.js"></script>
+  <script type="module">
+  import { supabase } from "../shared/supabase.js";
+
+  const { data, error } = await supabase
+    .from("customers")
+    .select("id")
+    .limit(1);
+
+  console.log("Supabase test:", data, error);
+</script>
+
 
 </head>
 
