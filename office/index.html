@@ -3290,6 +3290,34 @@ async function cloudFetchOOS(){
   document.getElementById("pillOOS").textContent = String(CLOUD.oos.length);
   return CLOUD.oos;
 }
+ async function loadJobTypesFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){ toast("Supabase not configured yet (Job Types)."); return; }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("job_types")
+    .select("id, name")
+    .eq("org_id", org)
+    .order("name");
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Job Types).");
+    return;
+  }
+
+  const el = document.getElementById("jobType");
+  el.innerHTML = `<option value="">Select job type</option>`;
+
+  (data || []).forEach(jt=>{
+    const opt = document.createElement("option");
+    opt.value = jt.id;
+    opt.textContent = jt.name;
+    el.appendChild(opt);
+  });
+}
+
 
 function _filter(list){
   const q = (document.getElementById("q").value||"").trim().toLowerCase();
@@ -3467,7 +3495,8 @@ document.getElementById("btnCreateJob").onclick = ()=>{
   const custId = document.getElementById("jobCustomer").value;
   fillFieldSelect("jobField", custId);
 
-  fillJobTypeSelect();
+  loadJobTypesFromSupabase();
+
 
   
   const jd = document.getElementById("jobDescription"); if(jd) jd.value = "";
