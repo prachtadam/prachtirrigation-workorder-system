@@ -3293,6 +3293,7 @@ async function cloudFetchOOS(){
     toast("Cloud pull failed (Customers).");
     return;
   }
+  console.log("Customers From Supabase",data);
 
   const el = document.getElementById(elId);
   el.innerHTML = `<option value="">Select customer</option>`;
