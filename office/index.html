@@ -3749,58 +3749,63 @@ async function refreshJobFieldsForCustomer(customerId){
 
 
 document.getElementById("btnSaveJob").onclick = async ()=>{
- const { error: jobErr } = await sb.from("jobs").insert([payload]);
-  const customerId = document.getElementById("jobCustomer")?.value || "";
-  const fieldId = document.getElementById("jobField")?.value || "";
-  const jobTypeId = document.getElementById("jobType")?.value || "";
-  const jobTypeName = document.getElementById("jobType")?.selectedOptions?.[0]?.textContent || jobTypeId;
+  const sb = (getSupabase ? getSupabase() : (window.sb || null));
+  if(!sb){ UI.toast("Supabase client not ready."); return; }
+  const org = window.SUPABASE_ORG_ID || "pracht";
+
+  // Pull real IDs (not labels)
+  const customerId = (document.getElementById("jobCustomer")?.value || "").trim();
+  const fieldId = (document.getElementById("jobField")?.value || "").trim();
+  const jobTypeId = (document.getElementById("jobType")?.value || "").trim();
   const description = (document.getElementById("jobDescription")?.value || "").trim();
-  const notesOffice = document.getElementById("jobNotes")?.value || "";
+  const notesOffice = (document.getElementById("jobNotes")?.value || "").trim();
 
   if(!customerId){ UI.toast("Pick a customer."); return; }
   if(!fieldId){ UI.toast("Pick a field."); return; }
   if(!jobTypeId){ UI.toast("Pick a job type."); return; }
+  if(!description){ UI.toast("Add a short job description."); return; }
 
-  // Job Title is automatic (example: PI1000)
-  const jobCode = jobTypePrefix(jobTypeId, jobTypeName) + pad4(db.meta.jobSeq++);
-  const title = jobCode;
+  // Truck: optional. Prefer "active truck" from URL/storage, else dropdown selection, else null.
+  const trSel = document.getElementById("jobTruck");
+  const url = new URL(location.href);
+  const activeTruckId = url.searchParams.get("truck_id") || url.searchParams.get("truck") || localStorage.getItem("ACTIVE_TRUCK_ID") || "";
+  const truckId = (activeTruckId || (trSel ? trSel.value : "") || "").trim() || null;
 
-  // Keep local view behavior (offline-friendly)
-  addJob({customerId, fieldId, type: jobTypeName, jobCode, title, description, notesOffice});
-  updateJobNumberPreview();
-  UI.closeModal("modalJob");
-  state.filterStatus = "open";
-  setView("jobs");
+  // Create a stable job_id
+  const jobId = "job_" + Date.now() + "_" + Math.random().toString(16).slice(2);
 
-  // SUPABASE INSERT (source of truth)
-  try{
-    const sb = (getSupabase ? getSupabase() : (window.sb || null));
-    if(!sb){ console.warn("Supabase client not ready."); return; }
+  const payload = {
+    org_id: org,
+    job_id: jobId,
+    customer_id: customerId,
+    field_id: fieldId,
+    job_type_id: jobTypeId,
+    truck_id: truckId,
+    status: "open",
+    description: description,
+    // If you have a notes column later, great; until then we store office notes appended.
+    ...(notesOffice ? { notes: notesOffice } : {})
+  };
 
-    const t = nowISO();
-    const url = new URL(location.href);
-    const activeTruckId = url.searchParams.get("truck_id") || url.searchParams.get("truck") || localStorage.getItem("ACTIVE_TRUCK_ID") || "";
-    const truckId = (document.getElementById("jobTruck")?.value || activeTruckId || null) || null;
-
-    const payload = {
-      org_id: window.SUPABASE_ORG_ID || "pracht",
-      job_id: uid("job"),
-      customer_id: customerId,
-      field_id: fieldId,
-      truck_id: truckId,
-      assigned_tech_id: null,
-      job_type_id: jobTypeId,
-      status: "open",
-      description: description || "",
-      created_at: t,
-      updated_at: t
-    };
-
-    
-    if(error){ console.error(error); UI.toast("Supabase insert failed (FK mismatch)."); }
-  }catch(err){
-    console.error(err);
+  // If your jobs table does NOT have a 'notes' column, remove it safely:
+  // We'll try insert; if notes column errors, retry without it.
+  let insertPayload = payload;
+  let { error } = await sb.from("jobs").insert([insertPayload]);
+  if(error && String(error.message||"").toLowerCase().includes("column") && String(error.message||"").includes("notes")){
+    const { notes, ...withoutNotes } = payload;
+    const retry = await sb.from("jobs").insert([withoutNotes]);
+    error = retry.error;
   }
+
+  if(error){
+    console.error("Create job failed:", error);
+    UI.toast(error.message || "Couldn't create job.");
+    return;
+  }
+
+  try{ UI.closeModal("modalJob"); }catch(_){}
+  try{ await refreshJobs(); }catch(_){}
+  UI.toast("Job created.");
 };
 
 
