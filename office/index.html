@@ -3433,21 +3433,20 @@ document.getElementById("btnSaveJob").onclick = ()=>{
   state.filterStatus = "open";
   setView("jobs");
   // ---- SUPABASE INSERT (office job create) ----
-/*supabase.from("jobs").insert({
-  org_id: "pracht",
-  customer_id: customerId,
-  field_id: fieldId,
-  job_type_id: type,
-  status: "open",
-  description: description
-});
-
-
-
- 
-
-
-};
+supabase
+  .from("jobs")
+  .insert([{
+    org_id: "pracht",
+    customer_id: customerId,
+    field_id: fieldId,
+    job_type_id: type,
+    status: "open",
+    description: description
+  }])
+  .then(({ error }) => {
+    if (error) console.error("jobs insert error:", error);
+    else console.log("job saved to supabase");
+  });
 
 document.getElementById("btnAddCustomer").onclick = ()=>{
   document.getElementById("custName").value = "";
