@@ -2482,46 +2482,48 @@ function updateJobStatusOffice(jobId, newStatus){
    CRUD base
 ===================== */
 async function addCustomer(payload){
- console.log("addCustomer payload:", payload);
+  // TEMP DEBUG: verify payload shape
+  console.log("addCustomer payload:", payload);
 
   const customer_id = uid("cust");
+  const t = nowISO();
 
-  // local save (keep your current behavior)
+  // local save (keep current behavior)
   db.customers.push({
     id: customer_id,
-    createdAt: nowISO(),
-    updatedAt: nowISO(),
+    createdAt: t,
+    updatedAt: t,
     customer: payload.customer,
     billing: payload.billing
   });
 
   saveDB(db);
 
-  // ---- SUPABASE INSERT (customer create) ----
-// ---- SUPABASE INSERT (customer create) ----
-if (window.sb) {
-  const c = payload.customer;
+  // ---- SUPABASE UPSERT (customer create) ----
+  try{
+    const sb = window.sb;
+    if(!sb){ console.warn("Supabase client not ready."); return; }
 
-  const row = {
-    org_id: window.ORG_ID || "pracht",
-    customer_id: customer_id,
-    name: c.name,
-    phone: c.phone || null,
-    email: c.email || null,
-    address: c.address || null
-  };
+    const c = payload.customer || {};
+    const row = {
+      org_id: window.ORG_ID || "pracht",
+      customer_id: customer_id,
+      name: c.name || "",
+      phone: c.phone || null,
+      email: c.email || null,
+      address: c.address || null
+    };
 
-  const { error: customerError } = await window.sb
-    .from("customers")
-    .upsert(row, { onConflict: "customer_id" });
+    const { error: customerError } = await sb
+      .from("customers")
+      .upsert(row, { onConflict: "customer_id" });
 
-  if (customerError) {
-    console.error("Supabase customer insert failed:", customerError);
-  } else {
-    console.log("customer saved to supabase");
+    if(customerError) console.error("customer insert error:", customerError);
+    else console.log("customer saved to supabase");
+  }catch(err){
+    console.error("customer insert exception:", err);
   }
 }
-
 
 function addField(payload){
   db.fields.push({
