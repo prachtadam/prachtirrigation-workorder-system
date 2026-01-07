@@ -2759,6 +2759,7 @@ const SETTINGS_TABS = [
   { key:"trucks", label:"Trucks" },
   { key:"stock", label:"Truck Stock Levels" },
   { key:"tools", label:"Truck Tool Lists" },
+  { key:"products", label:"Products" },
   { key:"jobtypes", label:"Job Types" },
   { key:"techs", label:"Techs" },
   { key:"assign", label:"Assign Techs → Trucks" },
@@ -2785,6 +2786,7 @@ function renderSettings(){
   if(state.settingsTab==="trucks") pane.innerHTML = settingsTrucksHtml();
   if(state.settingsTab==="stock") pane.innerHTML = settingsStockHtml();
   if(state.settingsTab==="tools") pane.innerHTML = settingsToolsHtml();
+  if(state.settingsTab==="products") pane.innerHTML = settingsProductsHtml();
   if(state.settingsTab==="jobtypes") pane.innerHTML = settingsJobTypesHtml();
   if(state.settingsTab==="techs") pane.innerHTML = settingsTechsHtml();
   if(state.settingsTab==="assign") pane.innerHTML = settingsAssignHtml();
@@ -3062,6 +3064,28 @@ function settingsToolsHtml(){
   `;
 }
 
+
+function settingsProductsHtml(){
+  const products = db.settings.products || [];
+  return `
+    <div class="panelHead"><div class="title">Products</div></div>
+    <div class="tiny">Pulled from Supabase on boot. (Read-only here.)</div>
+    <div class="divider"></div>
+    <div class="tiny">${products.length} products</div>
+    <div class="divider"></div>
+    <div class="list">
+      ${products.length ? products.map(p=>`
+        <div class="pill">
+          <div class="pillMain">
+            <div class="pillTitle">${escapeHtml(p.name || p.sku || p.id)}</div>
+            <div class="pillSub">${escapeHtml([p.sku, p.unit, p.category].filter(Boolean).join(" • "))}</div>
+          </div>
+        </div>
+      `).join("") : `<div class="empty">No products loaded.</div>`}
+    </div>
+  `;
+}
+
 function wireSettingsPane(){
   // Trucks
   const addTruck = document.getElementById("st_addTruck");
@@ -3310,7 +3334,7 @@ async function cloudFetchOOS(){
     el.appendChild(opt);
   });
 }
- async function loadProductsFromSupabase(){
+ window.loadProductsFromSupabase = async function loadProductsFromSupabase(){
   const sb = getSupabase();
   if(!sb){
     toast("Supabase not configured yet (Products).");
@@ -3330,7 +3354,8 @@ async function cloudFetchOOS(){
     return;
   }
 
-  db.products = (data || []).map(p => ({
+  db.settings = db.settings || {};
+  db.settings.products = (data || []).map(p => ({
     id: p.product_id,
     sku: p.sku,
     name: p.name,
