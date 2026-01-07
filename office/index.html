@@ -3747,6 +3747,7 @@ async function refreshJobFieldsForCustomer(customerId){
 
 
 document.getElementById("btnSaveJob").onclick = async ()=>{
+ const { error: jobErr } = await sb.from("jobs").insert([payload]);
   const customerId = document.getElementById("jobCustomer")?.value || "";
   const fieldId = document.getElementById("jobField")?.value || "";
   const jobTypeId = document.getElementById("jobType")?.value || "";
@@ -3801,7 +3802,7 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
 };
 
 
-const { error: jobErr } = await sb.from("jobs").insert([payload]);
+
 if(jobErr) console.error("jobs insert error:", jobErr);
 else console.log("job saved to supabase:", job_id);
 
