@@ -412,9 +412,12 @@
      window.SUPABASE_ANON_KEY = "sb_publishable_81elBWnKMo2ouw53vYQVUQ_Iyo3HHg1";
      window.SUPABASE_ORG_ID = "pracht";
   </script>
-<script type="module" src="../shared/supabase.js"></script>
+<script src="../shared/supabase.js"></script>
   <script type="module">
-  import { supabase } from "../shared/supabase.js";
+  // shared/supabase.js (NON-module)
+window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+window.ORG_ID = window.SUPABASE_ORG_ID || "pracht";
+
 
 
 </script>
@@ -3433,15 +3436,15 @@ document.getElementById("btnSaveJob").onclick = ()=>{
   state.filterStatus = "open";
   setView("jobs");
   // ---- SUPABASE INSERT (office job create) ----
-supabase
-  .from("jobs")
-  .insert([{
-    org_id: "pracht",
-    customer_id: customerId,
-    field_id: fieldId,
-    job_type_id: type,
-    status: "open",
-    description: description
+sb.from("jobs").insert([{
+  org_id: ORG_ID,
+  customer_id: customerId,
+  field_id: fieldId,
+  job_type_id: type,
+  status: "open",
+  description: description
+}]).then(({ error }) => error && console.error(error));
+
   }])
 });
   .then(({ error }) => {
