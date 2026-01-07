@@ -3515,23 +3515,32 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
   // ---- SUPABASE INSERT (office job create) ----
   try{
     const sb = window.sb;
-    if(!sb){ console.warn("Supabase client not ready."); return; }
+if(!sb){ console.warn("Supabase client not ready."); return; }
 
-    const truckId = document.getElementById("jobTruck")?.value || null;
-    const jt = (db.settings.jobTypes||[]).find(x=>x.name===type);
-    const payload = {
-      org_id: window.ORG_ID || "pracht",
-      customer_id: customerId,
-      field_id: fieldId,
-      truck_id: truckId,
-      job_type_id: jt ? jt.id : null,
-      status: "open",
-      description: description
-    };
+const truckId = document.getElementById("jobTruck")?.value || null;
+const jt = (db.settings.jobTypes||[]).find(x=>x.name===type);
 
-    const { error } = await sb.from("jobs").insert([payload]);
-    if(error) console.error("jobs insert error:", error);
-    else console.log("job saved to supabase");
+const t = nowISO();
+const job_id = uid("job");
+
+const payload = {
+  org_id: window.ORG_ID || "pracht",
+  job_id: job_id,
+  customer_id: customerId,
+  field_id: fieldId,
+  truck_id: truckId,
+  assigned_tech_id: null,
+  job_type_id: jt ? jt.id : null,
+  status: "open",
+  description: description || "",
+  created_at: t,
+  updated_at: t
+};
+
+const { error: jobErr } = await sb.from("jobs").insert([payload]);
+if(jobErr) console.error("jobs insert error:", jobErr);
+else console.log("job saved to supabase:", job_id);
+
    } catch (err) {
     console.error("jobs insert exception:", err);
   }
