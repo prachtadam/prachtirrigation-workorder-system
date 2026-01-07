@@ -3433,7 +3433,7 @@ document.getElementById("btnSaveJob").onclick = ()=>{
   state.filterStatus = "open";
   setView("jobs");
   // ---- SUPABASE INSERT (office job create) ----
-supabase.from("jobs").insert({
+/*supabase.from("jobs").insert({
   org_id: "pracht",
   customer_id: customerId,
   field_id: fieldId,
