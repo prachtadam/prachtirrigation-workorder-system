@@ -3452,17 +3452,9 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
     const { error } = await sb.from("jobs").insert([payload]);
     if(error) console.error("jobs insert error:", error);
     else console.log("job saved to supabase");
-  }catch(err){
+   } catch (err) {
     console.error("jobs insert exception:", err);
-  sb.from("jobs").insert([{
-  org_id: ORG_ID,
-  status: "open",
-  description: description
-}]).then(({ error }) => {
-  if (error) console.error("jobs insert error:", error);
-  else console.log("Job saved to Supabase");
-
-});
+  }
 };
 
 document.getElementById("btnAddCustomer").onclick = ()=>{
