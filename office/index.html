@@ -3794,7 +3794,7 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
       updated_at: t
     };
 
-    const { error } = await sb.from("jobs").insert(payload);
+    
     if(error){ console.error(error); UI.toast("Supabase insert failed (FK mismatch)."); }
   }catch(err){
     console.error(err);
