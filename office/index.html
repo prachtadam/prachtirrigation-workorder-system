@@ -3436,6 +3436,21 @@ document.getElementById("btnSaveJob").onclick = ()=>{
   UI.closeModal("modalJob");
   state.filterStatus = "open";
   setView("jobs");
+  // ---- SUPABASE INSERT (office job create) ----
+import("../shared/supabase.js").then(async ({ supabase }) => {
+  await supabase.from("jobs").insert({
+    customer_id: customerId,
+    field_id: fieldId,
+    job_type: type,
+    job_code: jobCode,
+    title,
+    description,
+    notes_office: notesOffice,
+    status: "open",
+    org_id: "pracht"
+  });
+});
+
 };
 
 document.getElementById("btnAddCustomer").onclick = ()=>{
