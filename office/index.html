@@ -3297,7 +3297,7 @@ async function cloudFetchOOS(){
   const org = window.SUPABASE_ORG_ID || "pracht";
   const { data, error } = await sb
     .from("job_types")
-    .select("id, name")
+    .select("job_type_id, name")
     .eq("org_id", org)
     .order("name");
 
@@ -3312,7 +3312,7 @@ async function cloudFetchOOS(){
 
   (data || []).forEach(jt=>{
     const opt = document.createElement("option");
-    opt.value = jt.id;
+    opt.value = jt.job_types_id;
     opt.textContent = jt.name;
     el.appendChild(opt);
   });
