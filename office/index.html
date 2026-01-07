@@ -3441,10 +3441,11 @@ supabase.from("jobs").insert({
   org_id: "pracht",
   customer_id: customerId,
   field_id: fieldId,
+  job_type_id: type,
   status: "open",
-  title: title,
-  description: description,
-  notes_office: notesOffice
+  description: description
+});
+
 });
 
  
