@@ -3612,7 +3612,9 @@ document.getElementById("btnCreateJob").onclick = async ()=>{
   const org = window.SUPABASE_ORG_ID || "pracht";
 
   // Clear inputs
-  document.getElementById("jobDescription")?.value = "";
+ const descEl = document.getElementById("jobDescription");
+if (descEl) descEl.value = "";
+
   document.getElementById("jobNotes")?.value = "";
   document.getElementById("jobCustomer") && (document.getElementById("jobCustomer").value = "");
   document.getElementById("jobField") && (document.getElementById("jobField").value = "");
