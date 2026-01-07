@@ -2565,8 +2565,6 @@ async function addField(payload){
   updated_at: t
 };
 
-    };
-
     const { error: fieldErr } = await sb
       .from("fields")
       .upsert(row, { onConflict: "field_id" });
