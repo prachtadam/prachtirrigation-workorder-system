@@ -3456,9 +3456,6 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
     console.error("jobs insert exception:", err);
     sb.from("jobs").insert([{
   org_id: ORG_ID,
-  customer_id: customerId,
-  field_id: fieldId,
-  job_type_id: type,
   status: "open",
   description: description
 }]).then(({ error }) => {
