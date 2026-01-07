@@ -2759,12 +2759,7 @@ function fillFieldSelect(elId, customerId){
 function fillJobTypeSelect(){
   const el = document.getElementById("jobType");
   el.innerHTML = "";
-  (db.settings.jobTypes || []).forEach(jt=>{
-    const opt = document.createElement("option");
-    opt.value = jt.name;
-    opt.textContent = jt.name;
-    el.appendChild(opt);
-  });
+ 
 }
 
 /* =====================
