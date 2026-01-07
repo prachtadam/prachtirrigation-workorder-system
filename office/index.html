@@ -3310,6 +3310,36 @@ async function cloudFetchOOS(){
     el.appendChild(opt);
   });
 }
+ async function loadProductsFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){
+    toast("Supabase not configured yet (Products).");
+    return;
+  }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("products")
+    .select("*")
+    .eq("org_id", org)
+    .order("name");
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Products).");
+    return;
+  }
+
+  db.products = (data || []).map(p => ({
+    id: p.product_id,
+    sku: p.sku,
+    name: p.name,
+    unit: p.unit,
+    category: p.category,
+    active: p.active
+  }));
+}
+
  async function loadFieldsFromSupabase(){
   const sb = getSupabase();
   if(!sb){ toast("Supabase not configured yet (Fields)."); return; }
