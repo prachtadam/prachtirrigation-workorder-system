@@ -3615,7 +3615,9 @@ document.getElementById("btnCreateJob").onclick = async ()=>{
  const descEl = document.getElementById("jobDescription");
 if (descEl) descEl.value = "";
 
-  document.getElementById("jobNotes")?.value = "";
+  const notesEl = document.getElementById("jobNotes");
+if (notesEl) notesEl.value = "";
+
   document.getElementById("jobCustomer") && (document.getElementById("jobCustomer").value = "");
   document.getElementById("jobField") && (document.getElementById("jobField").value = "");
 
