@@ -3437,19 +3437,18 @@ document.getElementById("btnSaveJob").onclick = ()=>{
   state.filterStatus = "open";
   setView("jobs");
   // ---- SUPABASE INSERT (office job create) ----
-import("../shared/supabase.js").then(async ({ supabase }) => {
-  await supabase.from("jobs").insert({
-    customer_id: customerId,
-    field_id: fieldId,
-    job_type: type,
-    job_code: jobCode,
-    title,
-    description,
-    notes_office: notesOffice,
-    status: "open",
-    org_id: "pracht"
-  });
+supabase.from("jobs").insert({
+  org_id: "pracht",
+  customer_id: customerId,
+  field_id: fieldId,
+  status: "open",
+  title: title,
+  description: description,
+  notes_office: notesOffice
 });
+
+ 
+
 
 };
 
