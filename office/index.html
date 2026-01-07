@@ -2482,6 +2482,8 @@ function updateJobStatusOffice(jobId, newStatus){
    CRUD base
 ===================== */
 async function addCustomer(payload){
+ console.log("addCustomer payload:", payload);
+
   const customer_id = uid("cust");
 
   // local save (keep your current behavior)
