@@ -3323,8 +3323,13 @@ async function cloudFetchOOS(){
     toast("Cloud pull failed (Fields).");
     return;
   }
+db.fields = (data || []).map(f => ({
+  id: f.field_id,
+  customer_id: f.customer_id,
+  field: { name: f.name }
+}));
 
-  db.fields = data || [];
+ 
 
   console.log("Fields From Supabase", data);
 }
