@@ -2722,21 +2722,8 @@ function partialImportFromJSON(str, opts){
 ===================== */
 function fillCustomerSelect(elId){
   const el = document.getElementById(elId);
-  el.innerHTML = "";
-  db.customers
-    .slice()
-    .sort((a,b)=>(a.customer?.name||"").toLowerCase().localeCompare((b.customer?.name||"").toLowerCase()))
-    .forEach(c=>{
-      const opt = document.createElement("option");
-      opt.value = c.id;
-      opt.textContent = c.customer?.name || "(Unnamed)";
-      el.appendChild(opt);
-    });
-  if(db.customers.length===0){
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "(No customers yet)";
-    el.appendChild(opt);
+  el.innerHTML = '<option value="">Select customer</option>';
+
   }
 }
 function fillFieldSelect(elId, customerId){
