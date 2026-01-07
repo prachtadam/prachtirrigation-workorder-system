@@ -594,22 +594,6 @@
   <script type="module" src="../shared/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
 
-
-<style>
-/* --- Report layout tweaks (customer report only) --- */
-.report-system-notes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.report-system-notes .left {
-  text-align: left;
-}
-.report-system-notes .right {
-  text-align: center;
-}
-</style>
-
 </head>
 <body>
   <form id="inspectionForm">
@@ -1429,7 +1413,7 @@ const canvasEl = sectionEl.querySelector('.tower-layout');
       `;
 
       html += '<div class="cover-card">';
-      html += '<h2></h2>';
+      html += '<h2>Inspection Summary</h2>';
       html += '<div class="info-grid">';
 
       function infoRow(label, value) {
@@ -1500,7 +1484,7 @@ const canvasEl = sectionEl.querySelector('.tower-layout');
             html += '<div class="small-note">No components inspected on this tower.</div>';
           } else {
             html += '<table class="report-table">';
-            html += '<tr><th>Component</th><th>Status</th></tr>';
+            html += '<tr><th>Component</th><th>Condition</th><th>Status</th><th>Details</th></tr>';
             compKeys.forEach(key => {
               const c = comps[key];
               if (!c) return;
@@ -1572,23 +1556,7 @@ const canvasEl = sectionEl.querySelector('.tower-layout');
         return;
       }
       const doc = win.document;
-      doc.write('<html><head><title>Pivots – Customer Report</title>
-<style>
-/* --- Report layout tweaks (customer report only) --- */
-.report-system-notes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.report-system-notes .left {
-  text-align: left;
-}
-.report-system-notes .right {
-  text-align: center;
-}
-</style>
-
-</head><body>');
+      doc.write('<html><head><title>Pivots – Customer Report</title></head><body>');
       doc.write(html);
       doc.write('</body></html>');
       doc.close();
@@ -1658,23 +1626,7 @@ const canvasEl = sectionEl.querySelector('.tower-layout');
           }
         </style>
       `);
-      doc.write('
-<style>
-/* --- Report layout tweaks (customer report only) --- */
-.report-system-notes {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-.report-system-notes .left {
-  text-align: left;
-}
-.report-system-notes .right {
-  text-align: center;
-}
-</style>
-
-</head><body>');
+      doc.write('</head><body>');
 
       doc.write('<div class="tech-header">');
       doc.write('<h1>Pivot Inspection – Tech Report</h1>');
