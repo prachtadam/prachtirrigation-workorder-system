@@ -3361,6 +3361,8 @@ async function cloudFetchOOS(){
     active: p.active
   }));
 }
+ window.loadPeopleFromSupabase = loadPeopleFromSupabase;
+
 
  window.loadProductsFromSupabase = async function loadProductsFromSupabase(){
   const sb = getSupabase();
