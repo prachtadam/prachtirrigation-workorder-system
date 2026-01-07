@@ -3328,7 +3328,8 @@ async function cloudFetchOOS(){
   }
 db.fields = (data || []).map(f => ({
   id: f.field_id,
-  customer_id: f.customer_id,
+  customerId: f.customer_id,
+ customer_id: f.customer_id,
   field: { name: f.name }
 }));
 
