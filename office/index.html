@@ -2498,35 +2498,27 @@ async function addCustomer(payload){
   saveDB(db);
 
   // ---- SUPABASE INSERT (customer create) ----
-  if (window.sb) {
-    sb.from("customers").insert([{
-      customer_id: customer_id,
-      org_id: window.ORG_ID || "pracht",
-      customer: payload.customer,
-      billing: payload.billing,
-      created_at: nowISO(),
-      updated_at: nowISO()
-    }]).then(({ error }) => {
-      if (error) console.error("customer insert error:", error);
-      else console.log("customer saved to supabase");
-       // 🔗 SUPABASE SAVE (NEW — DO NOT MOVE)
+// ---- SUPABASE INSERT (customer create) ----
+if (window.sb) {
+  const c = payload.customer;
+
   const row = {
-    org_id: window.ORG_ID,
-    customer_id: payload.customer_id,
-    name: payload.name,
-    phone: payload.phone || null,
-    email: payload.email || null
+    org_id: window.ORG_ID || "pracht",
+    customer_id: customer_id,
+    name: c.name,
+    phone: c.phone || null,
+    email: c.email || null,
+    address: c.address || null
   };
 
-  const { error } = await window.sb
+  const { error: customerError } = await window.sb
     .from("customers")
     .upsert(row, { onConflict: "customer_id" });
 
-  if (error) {
-    console.error("Supabase customer insert failed:", error);
-  }
-
-    });
+  if (customerError) {
+    console.error("Supabase customer insert failed:", customerError);
+  } else {
+    console.log("customer saved to supabase");
   }
 }
 
