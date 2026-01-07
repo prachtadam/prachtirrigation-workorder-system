@@ -3293,6 +3293,8 @@ async function cloudFetchOOS(){
     toast("Cloud pull failed (Customers).");
     return;
   }
+  db.customers = (data || []).map(c => ({ id: c.customer_id, customer: { name: c.name } }));
+
   console.log("Customers From Supabase",data);
 
   const el = document.getElementById(elId);
