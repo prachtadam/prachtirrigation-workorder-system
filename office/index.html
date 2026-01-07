@@ -405,24 +405,17 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 
   <!-- Supabase (shared with Tech App) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script type="module">
-    import {supabase} from "../shared/supabase.js";
-     window.SUPABASE_URL = "https://inwrnzkzseuymfzrpocn.supabase.co";
-     window.SUPABASE_ANON_KEY = "sb_publishable_81elBWnKMo2ouw53vYQVUQ_Iyo3HHg1";
-     window.SUPABASE_ORG_ID = "pracht";
-  </script>
-<script src="../shared/supabase.js"></script>
-  <script type="module">
-  // shared/supabase.js (NON-module)
-window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-window.ORG_ID = window.SUPABASE_ORG_ID || "pracht";
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // Shared Supabase config (Office Dashboard)
+  window.SUPABASE_URL = "https://inwrnzkzseuymfzrpocn.supabase.co";
+  window.SUPABASE_ANON_KEY = "sb_publishable_81elBWnKMo2ouw53vYQVUQ_Iyo3HHg1";
+  window.SUPABASE_ORG_ID = window.SUPABASE_ORG_ID || "pracht";
 
-
-
+  // Create a single client and reuse it everywhere
+  window.sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+  window.ORG_ID = window.SUPABASE_ORG_ID;
 </script>
-
-
 </head>
 
 <body>
@@ -1241,8 +1234,9 @@ function defaultDB(){
     jobs:[],
     settings:{
       trucks:[],                  // [{id,name}]
-      truckStock:{},              // {truckId: [{id, name, qty}]}
-      truckTools:{},              // {truckId: [{id, name}]}
+      truckStock:{},              // {truckId: [{id, partNumber, minQty}]}
+      truckTools:{},              // {truckId: [{id, name, qty}]}
+      products:[],                // [{partNumber, description}]
       jobTypes:[
         {id:uid("jt"), name:"Pivot Inspection"},
         {id:uid("jt"), name:"General Repair"},
@@ -3130,48 +3124,44 @@ function wireSettingsPane(){
 
   // Stock add/remove (uses selected truck)
   const addStock = document.getElementById("ss_add");
-  if(addStock){
-    const truckId = state.settingsStockTruckId;
-    addStock.onclick = ()=>{
-      const name = (document.getElementById("ss_name").value||"").trim();
-      const qty = safeNum(document.getElementById("ss_qty").value);
-      if(!name) return UI.toast("Item name required.");
-      db.settings.truckStock[truckId] = db.settings.truckStock[truckId] || [];
-      db.settings.truckStock[truckId].push({ id: uid("stk"), name, qty: qty ?? 0 });
-      saveDB(db);
-      renderSettings();
-    };
-    document.querySelectorAll("[data-del-stock]").forEach(btn=>{
-      btn.onclick = ()=>{
-        const id = btn.getAttribute("data-del-stock");
-        db.settings.truckStock[truckId] = (db.settings.truckStock[truckId]||[]).filter(x=>x.id!==id);
-        saveDB(db);
-        renderSettings();
-      };
+  if(addStock) addStock.onclick = ()=>{
+    const partNumber = (document.getElementById("ss_partNumber")?.value || "").trim();
+    const minQty = parseInt(document.getElementById("ss_minQty")?.value || "0", 10);
+
+    if(!partNumber) return UI.toast("Part # required.");
+    if(!Number.isFinite(minQty) || minQty < 0) return UI.toast("Min qty must be 0 or higher.");
+
+    db.settings.truckStock.push({
+      id: "stk_" + Date.now() + "_" + Math.random().toString(16).slice(2),
+      partNumber,
+      minQty
     });
-  }
 
-  // NEW: Tools truck selector
-  const stlSel = document.getElementById("stl_truckSel");
-  if(stlSel){
-    stlSel.onchange = ()=>{
-      state.settingsToolsTruckId = stlSel.value;
-      renderSettings();
-    };
-  }
+    document.getElementById("ss_partNumber").value = "";
+    document.getElementById("ss_minQty").value = 0;
+    saveDB(); renderSettings();
+  };
 
-  // Tools add/remove (uses selected truck)
-  const addTool = document.getElementById("stl_add");
+const addTool = document.getElementById("stl_add");
   if(addTool){
     const truckId = state.settingsToolsTruckId;
     addTool.onclick = ()=>{
-      const name = (document.getElementById("stl_name").value||"").trim();
+      const name = (document.getElementById("stl_name")?.value || "").trim();
+      const qty = parseInt(document.getElementById("stl_qty")?.value || "1", 10);
+
       if(!name) return UI.toast("Tool name required.");
+      if(!Number.isFinite(qty) || qty < 1) return UI.toast("Qty must be 1 or higher.");
+
       db.settings.truckTools[truckId] = db.settings.truckTools[truckId] || [];
-      db.settings.truckTools[truckId].push({ id: uid("tool"), name });
+      db.settings.truckTools[truckId].push({ id: uid("tool"), name, qty });
+
+      document.getElementById("stl_name").value = "";
+      document.getElementById("stl_qty").value = 1;
+
       saveDB(db);
       renderSettings();
     };
+
     document.querySelectorAll("[data-del-tool]").forEach(btn=>{
       btn.onclick = ()=>{
         const id = btn.getAttribute("data-del-tool");
@@ -3182,6 +3172,7 @@ function wireSettingsPane(){
     });
   }
 }
+
 
 
 /* =====================
@@ -3416,7 +3407,7 @@ document.getElementById("jobCustomer").addEventListener("change", (e)=>{
   fillFieldSelect("jobField", e.target.value);
 });
 
-document.getElementById("btnSaveJob").onclick = ()=>{
+document.getElementById("btnSaveJob").onclick = async ()=>{
   const customerId = document.getElementById("jobCustomer").value;
   const fieldId = document.getElementById("jobField").value;
   const type = document.getElementById("jobType").value;
@@ -3430,27 +3421,37 @@ document.getElementById("btnSaveJob").onclick = ()=>{
   const jobCode = jobTypePrefix(type) + pad4(db.meta.jobSeq++);
   const title = jobCode; // keep legacy "title" for any older UI bits
 
+  // Keep existing local behavior
   addJob({customerId, fieldId, type, jobCode, title, description, notesOffice});
   updateJobNumberPreview();
   UI.closeModal("modalJob");
   state.filterStatus = "open";
   setView("jobs");
-  // ---- SUPABASE INSERT (office job create) ----
-sb.from("jobs").insert([{
-  org_id: ORG_ID,
-  customer_id: customerId,
-  field_id: fieldId,
-  job_type_id: type,
-  status: "open",
-  description: description
-}]).then(({ error }) => error && console.error(error));
 
-  
-});
-  .then(({ error }) => {
-    if (error) console.error("jobs insert error:", error);
+  // ---- SUPABASE INSERT (office job create) ----
+  try{
+    const sb = window.sb;
+    if(!sb){ console.warn("Supabase client not ready."); return; }
+
+    const truckId = document.getElementById("jobTruck")?.value || null;
+    const jt = (db.settings.jobTypes||[]).find(x=>x.name===type);
+    const payload = {
+      org_id: window.ORG_ID || "pracht",
+      customer_id: customerId,
+      field_id: fieldId,
+      truck_id: truckId,
+      job_type_id: jt ? jt.id : null,
+      status: "open",
+      description: description
+    };
+
+    const { error } = await sb.from("jobs").insert([payload]);
+    if(error) console.error("jobs insert error:", error);
     else console.log("job saved to supabase");
-  });
+  }catch(err){
+    console.error("jobs insert exception:", err);
+  }
+};
 
 document.getElementById("btnAddCustomer").onclick = ()=>{
   document.getElementById("custName").value = "";
