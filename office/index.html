@@ -1,6 +1,10 @@
 <!doctype html>
+
+
 <html lang="en">
 <head>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="../shared/supabase.js"></script>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Office Dashboard (Local Demo)</title>
@@ -3450,7 +3454,17 @@ document.getElementById("btnSaveJob").onclick = async ()=>{
     else console.log("job saved to supabase");
   }catch(err){
     console.error("jobs insert exception:", err);
-  }
+    sb.from("jobs").insert([{
+  org_id: ORG_ID,
+  customer_id: customerId,
+  field_id: fieldId,
+  job_type_id: type,
+  status: "open",
+  description: description
+}]).then(({ error }) => {
+  if (error) console.error(error);
+  else console.log("Job saved to Supabase");
+});
 };
 
 document.getElementById("btnAddCustomer").onclick = ()=>{
