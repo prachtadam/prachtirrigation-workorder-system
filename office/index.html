@@ -3122,28 +3122,81 @@ function settingsProductsHtml(){
     </div>
 
     <div class="divider"></div>
-
-    <div class="row" style="gap:10px; flex-wrap:wrap;">
-      <input id="st_newPartNumber" class="input" placeholder="Part #" style="max-width:160px;" />
-      <input id="st_newDescription" class="input" placeholder="Description" style="flex:1; min-width:220px;" />
-      <input id="st_newUnit" class="input" placeholder="Unit" style="max-width:110px;" />
-      <input id="st_newCategory" class="input" placeholder="Category" style="max-width:150px;" />
-      <button id="st_addProduct" class="btn primary small">Add Part</button>
+    <div class="row" style="gap:10px;">
+      <button id="st_openAddProduct" class="btn primary small">Add Part</button>
     </div>
-
     <div class="divider"></div>
     <div class="list" id="st_prodList">
       ${filtered.length ? filtered.map(p=>`
         <div class="pill" style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
           <div class="pillMain" style="min-width:0;">
             <div class="pillTitle">${escapeHtml(p.description || p.name || "(no name)")}</div>
-            <div class="pillSub">${escapeHtml([p.partNumber || p.sku, p.unit, p.category].filter(Boolean).join(" • "))}</div>
+            <div class="pillSub">${escapeHtml([p.partNumber || p.sku, p.unit].filter(Boolean).join(" • "))}</div>
           </div>
           ${bubblesHtml(p)}
         </div>
       `).join("") : `<div class="empty">No products match.</div>`}
     </div>
   `;
+
+function updateProductsListInPlace(){
+  const listEl = document.getElementById("st_prodList");
+  const countEl = document.querySelector("#st_prodSearch")?.parentElement?.querySelector(".tiny");
+  if(!listEl) return;
+
+  const q = (window._settingsProdQuery || "").toLowerCase().trim();
+  const products = db.settings.products || [];
+  const trucksCfg = (db.settings && Array.isArray(db.settings.trucks) && db.settings.trucks.length)
+    ? db.settings.trucks
+    : (Array.isArray(db.trucks) ? db.trucks : []);
+
+  const stockByTruck = (window._sbTruckStockByTruck && typeof window._sbTruckStockByTruck === "object")
+    ? window._sbTruckStockByTruck
+    : {};
+
+  const filtered = q ? products.filter(p=>{
+    const hay = `${p.partNumber||""} ${p.description||""} ${p.sku||""} ${p.name||""}`.toLowerCase();
+    return hay.includes(q);
+  }) : products;
+
+  if(countEl) countEl.textContent = `${filtered.length}/${products.length}`;
+
+  const palette = ["var(--blue)", "var(--lime)", "var(--yellow)", "var(--orange)", "var(--red)", "var(--purple)"];
+  const truckColor = (id)=>{
+    const idx = trucksCfg.findIndex(t => (t.id||t.truck_id||t.truckId) === id);
+    return palette[(idx >= 0 ? idx : 0) % palette.length];
+  };
+
+  const bubblesHtml = (product)=>{
+    const pid = product.id || product.product_id || product.productId;
+    if(!pid || !trucksCfg.length) return "";
+    const bubbles = trucksCfg.map(t=>{
+      const tid = t.id || t.truck_id || t.truckId;
+      const qty = (stockByTruck[tid] && (stockByTruck[tid][pid] ?? stockByTruck[tid][String(pid)])) ?? null;
+      if(qty === null || qty === undefined) return "";
+      const c = truckColor(tid);
+      return `
+        <div title="${escapeAttr(t.name || t.label || tid)}" style="width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:12px;font-weight:700;background:${c};color:#0f1216;box-shadow:0 0 0 2px rgba(0,0,0,.25);">
+          ${escapeHtml(String(qty))}
+        </div>
+      `;
+    }).filter(Boolean);
+    if(!bubbles.length) return "";
+    return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">${bubbles.join("")}</div>`;
+  };
+
+  listEl.innerHTML = filtered.length ? filtered.map(p=>`
+    <div class="pill" style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+      <div class="pillMain" style="min-width:0;">
+        <div class="pillTitle">${escapeHtml(p.description || p.name || "(no name)")}</div>
+        <div class="pillSub">${escapeHtml([p.partNumber || p.sku, p.unit].filter(Boolean).join(" • "))}</div>
+      </div>
+      ${bubblesHtml(p)}
+    </div>
+  `).join("") : `<div class="empty">No products match.</div>`;
+}
+
+
 }
 
 function wireSettingsPane(){
@@ -3325,47 +3378,70 @@ const addTool = document.getElementById("stl_add");
       };
     });
   }
-  // Products search
-  const prodSearch = document.getElementById("st_prodSearch");
-  if(prodSearch){
-    prodSearch.oninput = ()=>{
-      window._settingsProdQuery = prodSearch.value || "";
-      try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
+  
+// Products search (in-place; avoid rerender stealing focus)
+const prodSearch = document.getElementById("st_prodSearch");
+if(prodSearch){
+  prodSearch.oninput = ()=>{
+    window._settingsProdQuery = prodSearch.value || "";
+    try{ updateProductsListInPlace(); }catch(e){}
+  };
+}
+
+// Products → open Add Part modal
+const openAddProd = document.getElementById("st_openAddProduct");
+if(openAddProd){
+  openAddProd.onclick = ()=>{
+    try{
+      document.getElementById("ap_partNumber").value = "";
+      document.getElementById("ap_description").value = "";
+      document.getElementById("ap_unit").value = "";
+    }catch(e){}
+    UI.openModal("modalAddProduct");
+    setTimeout(()=>{ try{ document.getElementById("ap_partNumber").focus(); }catch(e){} }, 50);
+  };
+}
+
+// Add Part modal → save to Supabase
+const saveAddProd = document.getElementById("ap_saveProduct");
+if(saveAddProd){
+  saveAddProd.onclick = async ()=>{
+    const partNumber = (document.getElementById("ap_partNumber")?.value || "").trim();
+    const description = (document.getElementById("ap_description")?.value || "").trim();
+    const unit = (document.getElementById("ap_unit")?.value || "").trim();
+
+    if(!partNumber) return UI.toast("Part # required.");
+    if(!description) return UI.toast("Description required.");
+
+    const sb = getSupabase();
+    if(!sb) return toast("Supabase not configured yet (Products)." );
+    const org = window.SUPABASE_ORG_ID || "pracht";
+
+    const product_id = "prod_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+    const payload = {
+      product_id,
+      org_id: org,
+      sku: partNumber,
+      name: description,
+      unit: unit || null,
+      category: null,
+      active: true
     };
-  }
 
-  // Add product (Supabase)
-  const addProdBtn = document.getElementById("st_addProduct");
-  if(addProdBtn){
-    addProdBtn.onclick = async ()=>{
-      const partNumber = (document.getElementById("st_newPartNumber")?.value || "").trim();
-      const description = (document.getElementById("st_newDescription")?.value || "").trim();
-      const unit = (document.getElementById("st_newUnit")?.value || "").trim();
-      const category = (document.getElementById("st_newCategory")?.value || "").trim();
+    const { error } = await sb.from("products").insert(payload);
+    if(error){
+      console.error(error);
+      return UI.toast("Couldn't save product.");
+    }
 
-      if(!partNumber) return UI.toast("Part # required.");
-      if(!description) return UI.toast("Description required.");
+    UI.closeModal("modalAddProduct");
 
-      const sb = getSupabase();
-      if(!sb) return toast("Supabase not configured yet (Products)." );
-      const org = window.SUPABASE_ORG_ID || "pracht";
+    try{ await loadProductsFromSupabase(); }catch(e){ try{ await window.loadProductsFromSupabase(); }catch(_e){} }
+    try{ await loadTruckStockFromSupabase(); }catch(e){}
+    try{ updateProductsListInPlace(); }catch(e){}
+  };
+}
 
-      const product_id = "prod_" + Date.now() + "_" + Math.random().toString(16).slice(2);
-      const payload = {
-        product_id,
-        org_id: org,
-        sku: partNumber,
-        name: description,
-        unit: unit || null,
-        category: category || null,
-        active: true
-      };
-
-      const { error } = await sb.from("products").insert(payload);
-      if(error){
-        console.error(error);
-        return UI.toast("Couldn't save product.");
-      }
 
       try{ document.getElementById("st_newPartNumber").value = ""; }catch(e){}
       try{ document.getElementById("st_newDescription").value = ""; }catch(e){}
@@ -3412,13 +3488,9 @@ async function cloudFetchRequests(){
   return CLOUD.requests;
 }
 async function cloudFetchOOS(){
-  const sb = getSupabase();
-  if(!sb){ toast("Supabase not configured yet (Out of Stock)."); return []; }
-  const org = window.SUPABASE_ORG_ID || "pracht";
-  const { data, error } = await sb.from("oos_events").select("*").eq("org_id", org).order("noted_at", {ascending:false});
-  if(error){ console.error(error); toast("Cloud pull failed (Out of Stock)."); return []; }
-  CLOUD.oos = data || [];
-  document.getElementById("pillOOS").textContent = String(CLOUD.oos.length);
+  // OOS is not backed by Supabase in this build (no table).
+  CLOUD.oos = [];
+  try{ document.getElementById("pillOOS").textContent = "0"; }catch(e){}
   return CLOUD.oos;
 }
  async function loadCustomersFromSupabase(elId){
@@ -3791,7 +3863,7 @@ async function resolveCurrent(){
     document.getElementById("pillRequests").textContent = String(CLOUD.requests.length);
     renderRequests();
   } else if(RESOLVE.kind==="oos"){
-    const { error } = await sb.from("oos_events").delete().eq("id", RESOLVE.id);
+    const { error } = await /* oos_events disabled */ sb.from("oos_events").delete().eq("id", RESOLVE.id);
     if(error){ console.error(error); toast("Resolve failed."); return; }
     CLOUD.oos = (CLOUD.oos||[]).filter(x=>String(x.id)!==String(RESOLVE.id));
     document.getElementById("pillOOS").textContent = String(CLOUD.oos.length);
@@ -4649,7 +4721,32 @@ document.addEventListener("DOMContentLoaded", () => {
   }, 120000);
 });
 
+
+<!-- Add Product Modal -->
+<div class="modalBackdrop" id="modalAddProduct" style="display:none;">
+  <div class="modal" style="width:min(640px,100%);">
+    <div class="modalHeader">
+      <h3>Add Part</h3>
+      <button class="btn small" onclick="UI.closeModal('modalAddProduct')">Close</button>
+    </div>
+    <div class="modalBody">
+      <div class="row" style="gap:10px; flex-wrap:wrap;">
+        <input id="ap_partNumber" class="input" placeholder="Part #" style="max-width:170px;" />
+        <input id="ap_description" class="input" placeholder="Description" style="flex:1; min-width:240px;" />
+        <input id="ap_unit" class="input" placeholder="Unit" style="max-width:120px;" />
+      </div>
+      <div class="divider"></div>
+      <div class="row" style="justify-content:flex-end; gap:10px;">
+        <button class="btn" onclick="UI.closeModal('modalAddProduct')">Cancel</button>
+        <button class="btn primary" id="ap_saveProduct">Save</button>
+      </div>
+      <div class="tiny" style="margin-top:10px;">Saves to Supabase and refreshes Products + Truck Stock.</div>
+    </div>
+  </div>
+</div>
+
 </script>
 </body>
 </html>
+
 
