@@ -2977,8 +2977,10 @@ function settingsStockHtml(){
 
     <div class="formGrid three" style="margin-top:10px;">
       <div class="field">
-        <label>Part Number</label>
-        <input class="input" id="ss_partNumber" placeholder="e.g., R-1234" />
+        <label>Part</label>
+        <select class="select2" id="ss_partNumber">
+          ${(db.settings.products||[]).map(p=>`<option value="${escapeAttr(p.partNumber)}">${escapeHtml(p.partNumber)} — ${escapeHtml(p.description||"")}</option>`).join("")}
+        </select>
       </div>
       <div class="field">
         <label>Min Qty</label>
@@ -3215,19 +3217,23 @@ function wireSettingsPane(){
   // Stock add/remove (uses selected truck)
   const addStock = document.getElementById("ss_add");
   if(addStock) addStock.onclick = ()=>{
+    const truckId = state.settingsStockTruckId;
     const partNumber = (document.getElementById("ss_partNumber")?.value || "").trim();
     const minQty = parseInt(document.getElementById("ss_minQty")?.value || "0", 10);
 
-    if(!partNumber) return UI.toast("Part # required.");
+    if(!partNumber) return UI.toast("Part required.");
     if(!Number.isFinite(minQty) || minQty < 0) return UI.toast("Min qty must be 0 or higher.");
 
-    db.settings.truckStock.push({
+    db.settings.truckStock = db.settings.truckStock || {};
+    db.settings.truckStock[truckId] = Array.isArray(db.settings.truckStock[truckId]) ? db.settings.truckStock[truckId] : [];
+
+    db.settings.truckStock[truckId].push({
       id: "stk_" + Date.now() + "_" + Math.random().toString(16).slice(2),
       partNumber,
       minQty
     });
 
-    document.getElementById("ss_partNumber").value = "";
+    try{ document.getElementById("ss_partNumber").value = ""; }catch(e){}
     document.getElementById("ss_minQty").value = 0;
     saveDB(); renderSettings();
   };
@@ -3360,7 +3366,18 @@ async function cloudFetchOOS(){
     role: p.role,
     active: p.active
   }));
-}
+
+  db.settings = db.settings || {};
+  const rows = (data || []);
+  db.settings.techs = rows
+    .filter(r => String(r.role||"").toLowerCase() === "tech" && r.active !== false)
+    .map(r => ({ id: r.person_id, name: r.name || "", phone: r.phone || "" }));
+
+  db.settings.helpers = rows
+    .filter(r => String(r.role||"").toLowerCase() === "helper" && r.active !== false)
+    .map(r => ({ id: r.person_id, name: r.name || "" }));
+
+  try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}}
  window.loadPeopleFromSupabase = loadPeopleFromSupabase;
 
 
@@ -3384,8 +3401,9 @@ async function cloudFetchOOS(){
     return;
   }
 
-  db.settings = db.settings || {};
-  db.settings.products = (data || []).map(p => ({
+  
+  // Products used in various places
+  db.products = (data || []).map(p => ({
     id: p.product_id,
     sku: p.sku,
     name: p.name,
@@ -3393,9 +3411,105 @@ async function cloudFetchOOS(){
     category: p.category,
     active: p.active
   }));
+
+  // Settings → Products list expects [{partNumber, description}]
+  db.settings = db.settings || {};
+  db.settings.products = (data || []).map(p => ({
+    partNumber: (p.sku || p.product_id || "").toString(),
+    description: (p.name || "").toString()
+  }));
+
+  try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
 }
 
- async function loadFieldsFromSupabase(){
+
+ 
+async function loadTrucksFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){ toast("Supabase not configured yet (Trucks)."); return; }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("trucks")
+    .select("*")
+    .eq("org_id", org)
+    .order("name");
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Trucks).");
+    return;
+  }
+
+  db.settings = db.settings || {};
+  db.settings.trucks = (data || []).map(t => ({
+    id: t.truck_id,
+    name: t.name || t.truck_id
+  }));
+
+  try{ if(typeof publishSharedStore === "function") publishSharedStore(); }catch(e){}
+  try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
+}
+window.loadTrucksFromSupabase = loadTrucksFromSupabase;
+
+async function loadRequestsFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){ toast("Supabase not configured yet (Requests)."); return; }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("requests")
+    .select("*")
+    .eq("org_id", org)
+    .order("created_at", { ascending: false });
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Requests).");
+    return;
+  }
+
+  db.requests = data || [];
+}
+window.loadRequestsFromSupabase = loadRequestsFromSupabase;
+
+async function loadJobsFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){ toast("Supabase not configured yet (Jobs)."); return; }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("jobs")
+    .select("*")
+    .eq("org_id", org)
+    .order("created_at", { ascending: false });
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Jobs).");
+    return;
+  }
+
+  // Keep raw rows, then normalize via migrate/normalize if the app has it
+  db.jobs = (data || []).map(j => ({
+    id: j.job_id || j.id,
+    customerId: j.customer_id || j.customerId || "",
+    fieldId: j.field_id || j.fieldId || "",
+    type: j.type || j.job_type || j.jobType || "Other",
+    jobCode: j.job_code || j.jobCode || "",
+    title: j.title || "",
+    description: j.details || j.description || "",
+    status: j.status || "open",
+    notesOffice: j.notes_office || j.notesOffice || "",
+    createdAt: j.created_at || j.createdAt || nowISO(),
+    updatedAt: j.updated_at || j.updatedAt || j.created_at || nowISO()
+  }));
+
+  try{ if(typeof renderJobs === "function") renderJobs(); }catch(e){}
+}
+window.loadJobsFromSupabase = loadJobsFromSupabase;
+
+async function loadFieldsFromSupabase(){
   const sb = getSupabase();
   if(!sb){ toast("Supabase not configured yet (Fields)."); return; }
 
@@ -4359,41 +4473,28 @@ function importTruckToolsCsv(rows){
       }
     }, 120);
   };
- async function loadProductsFromSupabase(){
-  const sb = getSupabase();
-  if(!sb){
-    toast("Supabase not configured yet (Products).");
-    return;
-  }
 
-  const org = window.SUPABASE_ORG_ID || "pracht";
-  const { data, error } = await sb
-    .from("products")
-    .select("*")
-    .eq("org_id", org)
-    .order("name");
-
-  if(error){
-    console.error(error);
-    toast("Cloud pull failed (Products).");
-    return;
-  }
-
-  db.products = (data || []).map(p => ({
-    id: p.product_id,
-    sku: p.sku,
-    name: p.name,
-    unit: p.unit,
-    category: p.category,
-    active: p.active
-  }));
-}
-
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
+  // Boot-time Supabase preloads (source of truth)
+  loadCustomersFromSupabase("jobCustomer");
+  loadFieldsFromSupabase();
+  loadJobTypesFromSupabase();
 
   loadProductsFromSupabase();
   loadPeopleFromSupabase();
+  loadTrucksFromSupabase();
 
+  loadRequestsFromSupabase();
+  loadJobsFromSupabase();
+
+  // Refresh loop (lightweight)
+  setInterval(()=>{
+    try{ loadProductsFromSupabase(); }catch(e){}
+    try{ loadPeopleFromSupabase(); }catch(e){}
+    try{ loadTrucksFromSupabase(); }catch(e){}
+    try{ loadRequestsFromSupabase(); }catch(e){}
+    try{ loadJobsFromSupabase(); }catch(e){}
+  }, 120000);
 });
 
 </script>
