@@ -3068,22 +3068,34 @@ function settingsToolsHtml(){
 
 
 function settingsProductsHtml(){
+  window._settingsProdQuery = window._settingsProdQuery || "";
+  const q = (window._settingsProdQuery || "").toLowerCase().trim();
   const products = db.settings.products || [];
+  const filtered = q ? products.filter(p=>{
+    const hay = `${p.partNumber||""} ${p.description||""} ${p.sku||""} ${p.name||""}`.toLowerCase();
+    return hay.includes(q);
+  }) : products;
+
   return `
     <div class="panelHead"><div class="title">Products</div></div>
     <div class="tiny">Pulled from Supabase on boot. (Read-only here.)</div>
     <div class="divider"></div>
-    <div class="tiny">${products.length} products</div>
+
+    <div class="row" style="gap:10px;">
+      <input id="st_prodSearch" class="input" placeholder="Search products..." value="${escapeHtml(window._settingsProdQuery)}" />
+      <div class="tiny" style="white-space:nowrap; align-self:center;">${filtered.length}/${products.length}</div>
+    </div>
+
     <div class="divider"></div>
-    <div class="list">
-      ${products.length ? products.map(p=>`
+    <div class="list" id="st_prodList">
+      ${filtered.length ? filtered.map(p=>`
         <div class="pill">
           <div class="pillMain">
-            <div class="pillTitle">${escapeHtml(p.name || p.sku || p.id)}</div>
-            <div class="pillSub">${escapeHtml([p.sku, p.unit, p.category].filter(Boolean).join(" • "))}</div>
+            <div class="pillTitle">${escapeHtml(p.description || p.name || "(no name)")}</div>
+            <div class="pillSub">${escapeHtml([p.partNumber || p.sku, p.unit, p.category].filter(Boolean).join(" • "))}</div>
           </div>
         </div>
-      `).join("") : `<div class="empty">No products loaded.</div>`}
+      `).join("") : `<div class="empty">No products match.</div>`}
     </div>
   `;
 }
@@ -3267,6 +3279,15 @@ const addTool = document.getElementById("stl_add");
       };
     });
   }
+  // Products search
+  const prodSearch = document.getElementById("st_prodSearch");
+  if(prodSearch){
+    prodSearch.oninput = ()=>{
+      window._settingsProdQuery = prodSearch.value || "";
+      try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
+    };
+  }
+
 }
 
 
@@ -3415,11 +3436,17 @@ async function cloudFetchOOS(){
   // Settings → Products list expects [{partNumber, description}]
   db.settings = db.settings || {};
   db.settings.products = (data || []).map(p => ({
+    id: p.product_id,
+    sku: p.sku,
+    name: p.name,
+    unit: p.unit,
+    category: p.category,
+    active: p.active,
     partNumber: (p.sku || p.product_id || "").toString(),
     description: (p.name || "").toString()
   }));
 
-  try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
+try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
 }
 
 
