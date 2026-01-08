@@ -3071,14 +3071,49 @@ function settingsProductsHtml(){
   window._settingsProdQuery = window._settingsProdQuery || "";
   const q = (window._settingsProdQuery || "").toLowerCase().trim();
   const products = db.settings.products || [];
+  const trucksCfg = (db.settings && Array.isArray(db.settings.trucks) && db.settings.trucks.length)
+    ? db.settings.trucks
+    : (Array.isArray(db.trucks) ? db.trucks : []);
+
+  // Supabase truck stock (loaded on boot): {truckId: {productId: qty}}
+  const stockByTruck = (window._sbTruckStockByTruck && typeof window._sbTruckStockByTruck === "object")
+    ? window._sbTruckStockByTruck
+    : {};
+
   const filtered = q ? products.filter(p=>{
     const hay = `${p.partNumber||""} ${p.description||""} ${p.sku||""} ${p.name||""}`.toLowerCase();
     return hay.includes(q);
   }) : products;
 
+  const palette = ["var(--blue)", "var(--lime)", "var(--yellow)", "var(--orange)", "var(--red)", "var(--purple)"];
+  const truckColor = (id)=>{
+    const idx = trucksCfg.findIndex(t => (t.id||t.truck_id||t.truckId) === id);
+    return palette[(idx >= 0 ? idx : 0) % palette.length];
+  };
+
+  const bubblesHtml = (product)=>{
+    const pid = product.id || product.product_id || product.productId;
+    if(!pid || !trucksCfg.length) return "";
+
+    const bubbles = trucksCfg.map(t=>{
+      const tid = t.id || t.truck_id || t.truckId;
+      const qty = (stockByTruck[tid] && (stockByTruck[tid][pid] ?? stockByTruck[tid][String(pid)])) ?? null;
+      if(qty === null || qty === undefined) return "";
+      const c = truckColor(tid);
+      return `
+        <div title="${escapeAttr(t.name || t.label || tid)}" style="width:22px;height:22px;border-radius:999px;display:grid;place-items:center;font-size:12px;font-weight:700;background:${c};color:#0f1216;box-shadow:0 0 0 2px rgba(0,0,0,.25);">
+          ${escapeHtml(String(qty))}
+        </div>
+      `;
+    }).filter(Boolean);
+
+    if(!bubbles.length) return "";
+    return `<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">${bubbles.join("")}</div>`;
+  };
+
   return `
     <div class="panelHead"><div class="title">Products</div></div>
-    <div class="tiny">Pulled from Supabase on boot. (Read-only here.)</div>
+    <div class="tiny">Pulled from Supabase on boot. Truck stock bubbles shown for configured trucks.</div>
     <div class="divider"></div>
 
     <div class="row" style="gap:10px;">
@@ -3087,13 +3122,24 @@ function settingsProductsHtml(){
     </div>
 
     <div class="divider"></div>
+
+    <div class="row" style="gap:10px; flex-wrap:wrap;">
+      <input id="st_newPartNumber" class="input" placeholder="Part #" style="max-width:160px;" />
+      <input id="st_newDescription" class="input" placeholder="Description" style="flex:1; min-width:220px;" />
+      <input id="st_newUnit" class="input" placeholder="Unit" style="max-width:110px;" />
+      <input id="st_newCategory" class="input" placeholder="Category" style="max-width:150px;" />
+      <button id="st_addProduct" class="btn primary small">Add Part</button>
+    </div>
+
+    <div class="divider"></div>
     <div class="list" id="st_prodList">
       ${filtered.length ? filtered.map(p=>`
-        <div class="pill">
-          <div class="pillMain">
+        <div class="pill" style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+          <div class="pillMain" style="min-width:0;">
             <div class="pillTitle">${escapeHtml(p.description || p.name || "(no name)")}</div>
             <div class="pillSub">${escapeHtml([p.partNumber || p.sku, p.unit, p.category].filter(Boolean).join(" • "))}</div>
           </div>
+          ${bubblesHtml(p)}
         </div>
       `).join("") : `<div class="empty">No products match.</div>`}
     </div>
@@ -3288,6 +3334,50 @@ const addTool = document.getElementById("stl_add");
     };
   }
 
+  // Add product (Supabase)
+  const addProdBtn = document.getElementById("st_addProduct");
+  if(addProdBtn){
+    addProdBtn.onclick = async ()=>{
+      const partNumber = (document.getElementById("st_newPartNumber")?.value || "").trim();
+      const description = (document.getElementById("st_newDescription")?.value || "").trim();
+      const unit = (document.getElementById("st_newUnit")?.value || "").trim();
+      const category = (document.getElementById("st_newCategory")?.value || "").trim();
+
+      if(!partNumber) return UI.toast("Part # required.");
+      if(!description) return UI.toast("Description required.");
+
+      const sb = getSupabase();
+      if(!sb) return toast("Supabase not configured yet (Products)." );
+      const org = window.SUPABASE_ORG_ID || "pracht";
+
+      const product_id = "prod_" + Date.now() + "_" + Math.random().toString(16).slice(2);
+      const payload = {
+        product_id,
+        org_id: org,
+        sku: partNumber,
+        name: description,
+        unit: unit || null,
+        category: category || null,
+        active: true
+      };
+
+      const { error } = await sb.from("products").insert(payload);
+      if(error){
+        console.error(error);
+        return UI.toast("Couldn't save product.");
+      }
+
+      try{ document.getElementById("st_newPartNumber").value = ""; }catch(e){}
+      try{ document.getElementById("st_newDescription").value = ""; }catch(e){}
+      try{ document.getElementById("st_newUnit").value = ""; }catch(e){}
+      try{ document.getElementById("st_newCategory").value = ""; }catch(e){}
+
+      try{ await loadProductsFromSupabase(); }catch(e){ try{ await window.loadProductsFromSupabase(); }catch(_e){} }
+      try{ await loadTruckStockFromSupabase(); }catch(e){}
+      try{ renderSettings(); }catch(e){}
+    };
+  }
+
 }
 
 
@@ -3478,6 +3568,39 @@ async function loadTrucksFromSupabase(){
   try{ if(typeof renderSettings === "function") renderSettings(); }catch(e){}
 }
 window.loadTrucksFromSupabase = loadTrucksFromSupabase;
+
+async function loadTruckStockFromSupabase(){
+  const sb = getSupabase();
+  if(!sb){ toast("Supabase not configured yet (Truck Stock)."); return; }
+
+  const org = window.SUPABASE_ORG_ID || "pracht";
+  const { data, error } = await sb
+    .from("truck_stock")
+    .select("*")
+    .eq("org_id", org);
+
+  if(error){
+    console.error(error);
+    toast("Cloud pull failed (Truck Stock).");
+    return;
+  }
+
+  db.truck_stock = data || [];
+
+  // Build fast lookup: {truckId:{productId: qty}}
+  const byTruck = {};
+  (data || []).forEach(r=>{
+    const tid = r.truck_id || r.truckId || r.truck;
+    const pid = r.product_id || r.productId || r.product;
+    if(!tid || !pid) return;
+    const qtyRaw = (r.qty_current ?? r.qty ?? r.current_qty ?? r.on_hand ?? r.qty_on_truck ?? r.qtyOnTruck ?? 0);
+    const qty = Number.isFinite(Number(qtyRaw)) ? Number(qtyRaw) : 0;
+    if(!byTruck[tid]) byTruck[tid] = {};
+    byTruck[tid][pid] = qty;
+  });
+  window._sbTruckStockByTruck = byTruck;
+}
+window.loadTruckStockFromSupabase = loadTruckStockFromSupabase;
 
 async function loadRequestsFromSupabase(){
   const sb = getSupabase();
@@ -4510,6 +4633,7 @@ document.addEventListener("DOMContentLoaded", () => {
   loadProductsFromSupabase();
   loadPeopleFromSupabase();
   loadTrucksFromSupabase();
+  loadTruckStockFromSupabase();
 
   loadRequestsFromSupabase();
   loadJobsFromSupabase();
@@ -4519,6 +4643,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try{ loadProductsFromSupabase(); }catch(e){}
     try{ loadPeopleFromSupabase(); }catch(e){}
     try{ loadTrucksFromSupabase(); }catch(e){}
+    try{ loadTruckStockFromSupabase(); }catch(e){}
     try{ loadRequestsFromSupabase(); }catch(e){}
     try{ loadJobsFromSupabase(); }catch(e){}
   }, 120000);
