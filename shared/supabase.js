@@ -1,4 +1,4 @@
-# filename: /shared/config.js
+
 export function getConfig() {
   const fromEnv = {
     supabaseUrl: "https://evdjfpzxirsuryawjtql.supabase.co",
