@@ -3787,6 +3787,67 @@ db.fields = (data || []).map(f => ({
     el.appendChild(opt);
   });
 }
+// Centralized refresh helper for Supabase-backed data
+async function refreshSupabaseData(){
+  try{ await loadCustomersFromSupabase("jobCustomer"); }catch(e){}
+  try{ await loadFieldsFromSupabase(); }catch(e){}
+  try{ await loadJobTypesFromSupabase(); }catch(e){}
+  try{ await loadProductsFromSupabase(); }catch(e){}
+  try{ await loadPeopleFromSupabase(); }catch(e){}
+  try{ await loadTrucksFromSupabase(); }catch(e){}
+  try{ await loadTruckStockFromSupabase(); }catch(e){}
+  try{ await loadRequestsFromSupabase(); }catch(e){}
+  try{ await loadJobsFromSupabase(); }catch(e){}
+}
+
+let supabaseRefreshTimer = null;
+function scheduleSupabaseRefresh(reason){
+  if(supabaseRefreshTimer) clearTimeout(supabaseRefreshTimer);
+  supabaseRefreshTimer = setTimeout(() => {
+    supabaseRefreshTimer = null;
+    refreshSupabaseData();
+  }, 600);
+}
+
+function setupSupabaseRealtime(){
+  const sb = getSupabase();
+  if(!sb){
+    console.warn("Supabase realtime not configured.");
+    return;
+  }
+  if(window._officeRealtimeChannel){
+    try{ sb.removeChannel(window._officeRealtimeChannel); }catch(e){}
+  }
+  const channel = sb.channel("office-realtime");
+  const tables = [
+    "customers",
+    "fields",
+    "job_types",
+    "products",
+    "people",
+    "trucks",
+    "truck_stock",
+    "requests",
+    "jobs"
+  ];
+  tables.forEach((table) => {
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      (payload) => {
+        console.log("Supabase change:", table, payload.eventType);
+        scheduleSupabaseRefresh(table);
+      }
+    );
+  });
+  channel.subscribe((status) => {
+    if(status === "SUBSCRIBED"){
+      console.log("Supabase realtime subscribed.");
+    }
+  });
+  window._officeRealtimeChannel = channel;
+}
+
 
 
 function _filter(list){
@@ -4698,26 +4759,12 @@ function importTruckToolsCsv(rows){
 
 document.addEventListener("DOMContentLoaded", () => {
   // Boot-time Supabase preloads (source of truth)
-  loadCustomersFromSupabase("jobCustomer");
-  loadFieldsFromSupabase();
-  loadJobTypesFromSupabase();
-
-  loadProductsFromSupabase();
-  loadPeopleFromSupabase();
-  loadTrucksFromSupabase();
-  loadTruckStockFromSupabase();
-
-  loadRequestsFromSupabase();
-  loadJobsFromSupabase();
+refreshSupabaseData();
+ setupSupabaseRealtime();
 
   // Refresh loop (lightweight)
   setInterval(()=>{
-    try{ loadProductsFromSupabase(); }catch(e){}
-    try{ loadPeopleFromSupabase(); }catch(e){}
-    try{ loadTrucksFromSupabase(); }catch(e){}
-    try{ loadTruckStockFromSupabase(); }catch(e){}
-    try{ loadRequestsFromSupabase(); }catch(e){}
-    try{ loadJobsFromSupabase(); }catch(e){}
+    refreshSupabaseData();
   }, 120000);
 });
 
@@ -4748,5 +4795,3 @@ document.addEventListener("DOMContentLoaded", () => {
 </script>
 </body>
 </html>
-
-
