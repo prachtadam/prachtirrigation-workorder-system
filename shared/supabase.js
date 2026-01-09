@@ -1,8 +1,36 @@
-// shared/supabase.js  (GLOBAL, NOT A MODULE)
+# filename: /shared/config.js
+export function getConfig() {
+  const fromEnv = {
+    supabaseUrl: "https://evdjfpzxirsuryawjtql.supabase.co",
+    supabaseAnonKey: "sb_publishable_DM1LTYa35ycFbloXyDofSw_PDDGKdrm",
+    orgId: window.SUPABASE_ORG_ID,
+  };
 
-window.ORG_ID = "pracht";
+  const fromStorage = {
+    supabaseUrl: localStorage.getItem('SUPABASE_URL'),
+    supabaseAnonKey: localStorage.getItem('SUPABASE_ANON_KEY'),
+    orgId: localStorage.getItem('ORG_ID'),
+  };
 
-window.sb = supabase.createClient(
-  "https://inwrnzkzseuymfzrpocn.supabase.co",
-  "sb_publishable_81elBWnKMo2ouw53vYQVUQ_Iyo3HHg1"
-);
+  const supabaseUrl = fromEnv.supabaseUrl || fromStorage.supabaseUrl || '';
+  const supabaseAnonKey = fromEnv.supabaseAnonKey || fromStorage.supabaseAnonKey || '';
+  const orgId = fromEnv.orgId || fromStorage.orgId || '';
+
+  return {
+    supabaseUrl,
+    supabaseAnonKey,
+    orgId,
+  };
+}
+
+export function saveConfig({ supabaseUrl, supabaseAnonKey, orgId }) {
+  if (supabaseUrl) {
+    localStorage.setItem('SUPABASE_URL', supabaseUrl);
+  }
+  if (supabaseAnonKey) {
+    localStorage.setItem('SUPABASE_ANON_KEY', supabaseAnonKey);
+  }
+  if (orgId) {
+    localStorage.setItem('ORG_ID', orgId);
+  }
+}
