@@ -9,6 +9,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Office Dashboard (Local Demo)</title>
+<link rel=""icon" href="data:;base64,=" />
   <style>
     :root{
       --bg:#0f1216;
@@ -3138,7 +3139,7 @@ function settingsProductsHtml(){
       `).join("") : `<div class="empty">No products match.</div>`}
     </div>
   `;
-
+  }
 function updateProductsListInPlace(){
   const listEl = document.getElementById("st_prodList");
   const countEl = document.querySelector("#st_prodSearch")?.parentElement?.querySelector(".tiny");
@@ -3194,9 +3195,6 @@ function updateProductsListInPlace(){
       ${bubblesHtml(p)}
     </div>
   `).join("") : `<div class="empty">No products match.</div>`;
-}
-
-
 }
 
 function wireSettingsPane(){
@@ -3441,22 +3439,6 @@ if(saveAddProd){
     try{ updateProductsListInPlace(); }catch(e){}
   };
 }
-
-
-      try{ document.getElementById("st_newPartNumber").value = ""; }catch(e){}
-      try{ document.getElementById("st_newDescription").value = ""; }catch(e){}
-      try{ document.getElementById("st_newUnit").value = ""; }catch(e){}
-      try{ document.getElementById("st_newCategory").value = ""; }catch(e){}
-
-      try{ await loadProductsFromSupabase(); }catch(e){ try{ await window.loadProductsFromSupabase(); }catch(_e){} }
-      try{ await loadTruckStockFromSupabase(); }catch(e){}
-      try{ renderSettings(); }catch(e){}
-    };
-  }
-
-}
-
-
 
 /* =====================
    Supabase bridge: Requests + Out of Stock (minimal)
@@ -3787,6 +3769,7 @@ db.fields = (data || []).map(f => ({
     el.appendChild(opt);
   });
 }
+
 // Centralized refresh helper for Supabase-backed data
 async function refreshSupabaseData(){
   try{ await loadCustomersFromSupabase("jobCustomer"); }catch(e){}
@@ -4768,7 +4751,7 @@ refreshSupabaseData();
   }, 120000);
 });
 
-
+</script>
 <!-- Add Product Modal -->
 <div class="modalBackdrop" id="modalAddProduct" style="display:none;">
   <div class="modal" style="width:min(640px,100%);">
@@ -4792,6 +4775,5 @@ refreshSupabaseData();
   </div>
 </div>
 
-</script>
 </body>
 </html>
