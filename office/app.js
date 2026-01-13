@@ -633,6 +633,8 @@ async function renderOutOfStock() {
   viewContainer.appendChild(container);
 }
 
+
+
 async function renderReceipts() {
   viewTitle.textContent = 'Receipts';
   viewSubtitle.textContent = 'Archived receipts and 2-step removal.';
@@ -707,7 +709,7 @@ async function renderToolsView() {
   const detailCard = document.createElement('div');
   detailCard.className = 'card section-stack';
 
-  function renderToolDetail(tool) {
+  async function renderToolDetail(tool) {
     detailCard.innerHTML = '';
     const form = document.createElement('form');
     form.className = 'section-stack';
@@ -867,25 +869,882 @@ function renderSettings() {
   viewContainer.appendChild(card);
 }
 
+
+/* ============================
+   UI HELPERS (premium modals)
+   - no Supabase changes
+============================ */
+function getId(obj) {
+  return obj?.customer_id ?? obj?.field_id ?? obj?.job_id ?? obj?.id ?? obj?.uuid ?? null;
+}
+function getCustomerId(obj){ return obj?.customer_id ?? obj?.id ?? null; }
+function getFieldId(obj){ return obj?.field_id ?? obj?.id ?? null; }
+
+
+
+function openRowEditModal(title, row, type, onSave){
+  // Supabase is king: row keys define what exists. For editing, we show only human-facing fields
+  // with clear labels, and hide backend keys (id/org/customer_id etc).
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+      <div class="modal-head">
+        <div class="modal-title">${escapeHtml(title)}</div>
+        <button class="pill tiny" type="button" data-close>Close</button>
+      </div>
+      <div class="modal-body">
+        <form class="form-grid form-grid-2" id="edit-form"></form>
+      </div>
+      <div class="modal-foot">
+        <button class="pill secondary" type="button" data-cancel>Cancel</button>
+        <button class="action" type="button" data-save>Save</button>
+      </div>
+    </div>
+    <button class="modal-scrim" aria-label="Close"></button>
+  `;
+  document.body.appendChild(modal);
+
+  const form = modal.querySelector('#edit-form');
+
+  const HIDE_KEYS_COMMON = new Set([
+    'id','org_id','customer_id','field_id','job_id',
+    'created_at','updated_at',
+  ]);
+
+  // Prefer these keys + labels when present (customer/field forms)
+  const CUSTOMER_FIELDS = [
+    { label: 'Name / Company', keys: ['name'] },
+    { label: 'Contact Name',  keys: ['contact_name'] },
+    { label: 'Phone',         keys: ['phone'] },
+    { label: 'Email',         keys: ['email'] },
+    { label: 'Notes',         keys: ['notes'], textarea: true },
+  ];
+
+  const FIELD_FIELDS = [
+    { label: 'Field Name',        keys: ['name','field_name'] },
+    { label: 'Address / Location',keys: ['address','location','field_address'], textarea: true },
+    { label: 'Lat',              keys: ['lat','latitude'] },
+    { label: 'Lon',              keys: ['lon','lng','longitude'] },
+    { label: 'Brand',            keys: ['brand','pivot_brand'] },
+    { label: 'Tower Count',      keys: ['tower_count','towers','towerCount'] },
+    { label: 'Serial Number',    keys: ['serial_number','serial','reinke_serial'] },
+    { label: 'Telemetry',        keys: ['has_telemetry','telemetry','hasTelemetry'] , boolean: true },
+    { label: 'Telemetry Make',   keys: ['telemetry_make'] },
+    { label: 'Telemetry Serial', keys: ['telemetry_serial'] },
+    { label: 'Last Known Hours', keys: ['last_known_hours','current_hours','hours'] },
+    { label: 'Notes',            keys: ['additional_info','notes','note'], textarea: true },
+  ];
+
+  function pickExistingKey(keys){
+    for (const k of keys){
+      if (row && Object.prototype.hasOwnProperty.call(row, k)) return k;
+    }
+    return null;
+  }
+
+  // Build field list to show in modal
+  let fieldSpecs = [];
+  if (type === 'customer') fieldSpecs = CUSTOMER_FIELDS;
+  else if (type === 'field') fieldSpecs = FIELD_FIELDS;
+
+  // If we don't have a spec (or row is odd), fall back to all keys minus hidden.
+  if (!fieldSpecs.length){
+    fieldSpecs = Object.keys(row || {})
+      .filter(k => !HIDE_KEYS_COMMON.has(k))
+      .map(k => ({ label: prettyLabel(k), keys: [k] }));
+  }
+
+  const inputs = {}; // key -> element
+  fieldSpecs.forEach(spec => {
+    const k = pickExistingKey(spec.keys);
+    if (!k) return; // if this column doesn't exist in Supabase row, don't show it
+    if (HIDE_KEYS_COMMON.has(k)) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'form-item';
+
+    const labelEl = document.createElement('label');
+    labelEl.textContent = spec.label || prettyLabel(k);
+    labelEl.htmlFor = 'f_' + k;
+
+    const hint = document.createElement('div');
+    hint.className = 'field-hint';
+    hint.textContent = k; // supabase column key (debug/clarity)
+
+    const v = row?.[k];
+
+    let input;
+    if (spec.boolean || typeof v === 'boolean'){
+      input = document.createElement('select');
+      input.innerHTML = `<option value="">(blank)</option><option value="true">Yes</option><option value="false">No</option>`;
+      input.value = (v === true) ? 'true' : (v === false) ? 'false' : '';
+    } else if (spec.textarea || (typeof v === 'string' && v.length > 80)){
+      input = document.createElement('textarea');
+      input.value = v ?? '';
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = (v ?? '');
+    }
+
+    input.id = 'f_' + k;
+    input.dataset.key = k;
+
+    wrap.append(labelEl, hint, input);
+    form.appendChild(wrap);
+    inputs[k] = input;
+  });
+
+  const close = () => { modal.remove(); };
+  modal.querySelector('[data-close]').addEventListener('click', close);
+  modal.querySelector('[data-cancel]').addEventListener('click', close);
+  modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+  modal.querySelector('[data-save]').addEventListener('click', async () => {
+    const changes = {};
+    for (const [k, el] of Object.entries(inputs)){
+      if (el.tagName === 'SELECT'){
+        if (el.value === '') continue;
+        changes[k] = (el.value === 'true');
+        continue;
+      }
+      const val = el.value;
+      // allow clearing by setting empty string
+      changes[k] = val;
+    }
+
+    try{
+      await onSave(mergeForUpdate(row, changes, type));
+      close();
+    }catch(e){
+      showToast(e?.message || String(e));
+    }
+  });
+}
+
+
+function openModalSimple({ title, bodyEl, onClose }) {
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  const scrim = document.createElement('button');
+  scrim.className = 'modal-scrim';
+  scrim.type = 'button';
+  scrim.addEventListener('click', () => close());
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  const head = document.createElement('div');
+  head.className = 'modal-head';
+  const t = document.createElement('div');
+  t.className = 'modal-title';
+  t.textContent = title || '';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'pill tiny';
+  closeBtn.type = 'button';
+  closeBtn.textContent = 'Close';
+  closeBtn.addEventListener('click', () => close());
+  head.append(t, closeBtn);
+  card.append(head, bodyEl);
+  modal.append(card, scrim);
+  document.body.appendChild(modal);
+
+  const onKey = (e)=>{ if(e.key==='Escape') close(); };
+  document.addEventListener('keydown', onKey);
+
+  function close(){
+    document.removeEventListener('keydown', onKey);
+    modal.remove();
+    onClose && onClose();
+  }
+  return { close };
+}
+
+
+/* === DATA CONTRACT (Supabase is king) ===
+   Rules:
+   - Never guess IDs; always use what Supabase row contains.
+   - Updates send merged payloads (existing row + changes), never partials.
+   - Strip undefined so we don't accidentally wipe columns.
+*/
+const ID_KEYS = {
+  customer: ['customer_id','id'],
+  field: ['field_id','id'],
+  job: ['job_id','id'],
+};
+
+function getIdFromRow(row, type){
+  const keys = ID_KEYS[type] || ['id'];
+  for (const k of keys){
+    if (row && row[k] !== undefined && row[k] !== null && String(row[k]).length) return row[k];
+  }
+  return null;
+}
+
+function stripUndefined(obj){
+  return Object.fromEntries(Object.entries(obj || {}).filter(([,v]) => v !== undefined));
+}
+
+function mergeForUpdate(existingRow, changes, type){
+  const id = getIdFromRow(existingRow, type) || getIdFromRow(changes, type);
+  const merged = stripUndefined({ ...(existingRow || {}), ...(changes || {}) });
+  // enforce ID keys present exactly as Supabase expects
+  if (type === 'customer'){
+    if (existingRow?.customer_id || changes?.customer_id) merged.customer_id = id;
+    if (existingRow?.id || changes?.id) merged.id = id;
+  } else if (type === 'field'){
+    if (existingRow?.field_id || changes?.field_id) merged.field_id = id;
+    if (existingRow?.id || changes?.id) merged.id = id;
+  } else if (type === 'job'){
+    if (existingRow?.job_id || changes?.job_id) merged.job_id = id;
+    if (existingRow?.id || changes?.id) merged.id = id;
+  }
+  return merged;
+}
+
+function prettyLabel(key){
+  const s = String(key || '').replaceAll('_',' ').replaceAll('-',' ');
+  return s.replace(/\b\w/g, (m)=>m.toUpperCase());
+}
+
+function escapeHtml(str){
+  return String(str ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;')
+    .replaceAll('"','&quot;')
+    .replaceAll("'",'&#39;');
+}
+
+
+function prettyKey(k){
+  return String(k)
+    .replaceAll('_',' ')
+    .replace(/\bid\b/i,'ID')
+    .replace(/\borg\b/i,'Org')
+    .replace(/\bat\b/i,'At')
+    .replace(/\bno\b/i,'No')
+    .replace(/\bqty\b/i,'Qty')
+    .replace(/\bzip\b/i,'ZIP')
+    .replace(/\blng\b/i,'Lng')
+    .replace(/\blat\b/i,'Lat')
+    .replace(/\burl\b/i,'URL')
+    .replace(/\bsku\b/i,'SKU')
+    .replace(/\bdb\b/i,'DB')
+    .replace(/\bapi\b/i,'API')
+    .replace(/(^|\s)\S/g, (m)=>m.toUpperCase());
+}
+
+function renderInfoGrid(obj, { hideKeys = [] } = {}){
+  const entries = Object.entries(obj || {}).filter(([k,v]) => !hideKeys.includes(k));
+  const grid = document.createElement('div');
+  grid.className = 'info-grid';
+  for (const [k,v] of entries){
+    const item = document.createElement('div');
+    item.className = 'info-item';
+    const label = document.createElement('div');
+    label.className = 'info-label';
+    label.textContent = prettyKey(k);
+    const val = document.createElement('div');
+    val.className = 'info-val';
+    val.textContent = (v === null || v === undefined) ? '' : String(v);
+    item.append(label, val);
+    grid.appendChild(item);
+  }
+  return grid;
+}
+function elTag(tag, attrs={}, children=[]) {
+  const n = document.createElement(tag);
+  Object.entries(attrs||{}).forEach(([k,v])=>{
+    if (k === 'className') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on') && typeof v === 'function') n.addEventListener(k.slice(2).toLowerCase(), v);
+    else n.setAttribute(k, v);
+  });
+  (children||[]).forEach(c=> n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+  return n;
+}
+
+
+/* ============================
+   PREMIUM CUSTOMER -> FIELD FLOW
+============================ */
+async function fetchAllJobsSafe() {
+  try { return await listJobs({}); } catch(e) {
+    try { return await listJobs(); } catch(e2) { return []; }
+  }
+}
+
+function jobStatusKey(job){
+  const s = (job.status || job.job_status || job.state || '').toLowerCase();
+  if (s.includes('paused')) return 'paused';
+  if (s.includes('progress') || s.includes('on_site') || s.includes('on the way') || s.includes('on_the_way')) return 'in_progress';
+  if (s.includes('finish') || s.includes('invoic') || s.includes('close')) return 'finished';
+  return 'open';
+}
+
+async function renderCustomersPremium() {
+  viewTitle.textContent = 'Customers';
+  viewSubtitle.textContent = 'Select a customer to open their file (fields + jobs).';
+  viewActions.innerHTML = '';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'section-stack';
+
+  const top = document.createElement('div');
+  top.className = 'top-controls';
+
+  const search = document.createElement('input');
+  search.className = 'search';
+  search.type = 'search';
+  search.placeholder = 'Search customers by name / phone / email / address…';
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'action';
+  addBtn.type = 'button';
+  addBtn.textContent = '+ Add Customer';
+
+  top.append(search, addBtn);
+
+  const listCard = document.createElement('div');
+  listCard.className = 'card customer-list';
+  wrapper.append(top, listCard);
+
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(wrapper);
+
+  const [customers, jobs] = await Promise.all([listCustomers(), fetchAllJobsSafe()]);
+
+  const jobsByCustomer = new Map();
+  for (const j of jobs) {
+    const cid = j.customer_id || j.customerId || j.customer || j.customer?.id;
+    if (!cid) continue;
+    if (!jobsByCustomer.has(cid)) jobsByCustomer.set(cid, []);
+    jobsByCustomer.get(cid).push(j);
+  }
+
+  const renderList = () => {
+    const q = search.value.trim().toLowerCase();
+    listCard.innerHTML = '';
+
+    const filtered = customers.filter((c) => {
+      if (!q) return true;
+      const hay = [
+        c.name, c.contact_name, c.phone, c.email, c.address,
+        c.billing_name, c.billing_phone, c.billing_email, c.billing_address
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+
+    if (!filtered.length) {
+      listCard.appendChild(elTag('div', { className: 'muted', text: 'No customers found.' }));
+      return;
+    }
+
+    for (const c of filtered) {
+      const cid = getCustomerId(c);
+      const related = jobsByCustomer.get(cid) || [];
+      const counts = { open:0, paused:0, finished:0 };
+      for (const j of related) {
+        const k = jobStatusKey(j);
+        if (k === 'paused') counts.paused++;
+        else if (k === 'finished') counts.finished++;
+        else counts.open++;
+      }
+
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'pill customer-row compact-row';
+      row.innerHTML = `
+        <div class="cust-left">
+          <div class="cust-name">${(c.name || 'Customer')}</div>
+          <div class="cust-phone muted">${(c.phone || '')}</div>
+        </div>
+        <div class="row-chips">
+          <div class="kpi-circle kpi-open" title="Open jobs">${counts.open}</div>
+          <div class="kpi-circle kpi-paused" title="Paused jobs">${counts.paused}</div>
+          <div class="kpi-circle kpi-finished" title="Finished jobs">${counts.finished}</div>
+        </div>
+      `;
+
+      row.addEventListener('click', async () => {
+        state.customerId = cid;
+        state.fieldId = null;
+        await renderCustomerFilePremium();
+      });
+
+      listCard.appendChild(row);
+    }
+  };
+
+  search.addEventListener('input', renderList);
+  addBtn.addEventListener('click', async () => {
+    const body = document.createElement('div');
+    body.className = 'section-stack';
+    const form = document.createElement('div');
+    form.className = 'form-grid';
+
+    const fields = [
+      ['name','Customer Name'],
+      ['phone','Phone'],
+      ['email','Email'],
+      ['address','Address'],
+    ];
+    const inputs = {};
+    fields.forEach((k)=>{
+      const label = prettyLabel(k);
+      const wrap = document.createElement('div');
+      const lab = document.createElement('label'); lab.textContent = label;
+      const inp = document.createElement('input'); inp.name = k; inp.placeholder = label;
+      inputs[k]=inp;
+      wrap.append(lab, inp);
+      form.appendChild(wrap);
+    });
+
+    const foot = document.createElement('div');
+    foot.className = 'modal-foot';
+    const cancel = document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
+    const save = document.createElement('button'); save.className='action'; save.type='button'; save.textContent='Save';
+    foot.append(cancel, save);
+
+    body.append(form, foot);
+    const { close } = openModalSimple({ title:'Add Customer', bodyEl: body });
+
+    cancel.addEventListener('click', () => close());
+    save.addEventListener('click', async () => {
+      const payload = {};
+      fields.forEach(([k])=> payload[k] = inputs[k].value.trim());
+      if (!payload.name) return showToast('Customer name is required.');
+      try{
+        await createCustomer(payload);
+        await refreshBoot();
+        close();
+        await renderCustomersPremium();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+
+  renderList();
+}
+
+async function renderCustomerFilePremium() {
+  const customerId = state.customerId;
+  if (!customerId) return renderCustomersPremium();
+
+  const customers = await listCustomers();
+  const customer = customers.find((c)=> getCustomerId(c) === customerId);
+  if (!customer) { state.customerId=null; return renderCustomersPremium(); }
+
+  const [fields, jobs] = await Promise.all([listFields(), fetchAllJobsSafe()]);
+  const custFields = fields.filter((f)=> (f.customer_id || f.customerId) === customerId);
+
+  const jobsForCustomer = jobs.filter((j)=> (j.customer_id || j.customerId) === customerId);
+  const kpis = { open:0, paused:0, in_progress:0, finished:0 };
+  for (const j of jobsForCustomer){
+    const k = jobStatusKey(j);
+    if (k==='paused') kpis.paused++;
+    else if (k==='in_progress') kpis.in_progress++;
+    else if (k==='finished') kpis.finished++;
+    else kpis.open++;
+  }
+
+  viewTitle.textContent = customer.name || 'Customer';
+  viewSubtitle.textContent = `Customer File • ${custFields.length} field(s)`;
+  viewActions.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'card section-stack';
+
+  const headRow = document.createElement('div');
+  headRow.className = 'detail-head';
+
+  const left = document.createElement('div');
+  left.className = 'detail-left';
+  left.innerHTML = `
+    <div class="detail-title">${customer.name || 'Customer'}</div>
+    <div class="detail-sub muted">${[customer.phone, customer.email, customer.address].filter(Boolean).join(' • ')}</div>
+  `;
+
+  const actions = document.createElement('div');
+  actions.className = 'detail-actions';
+
+  const back = document.createElement('button');
+  back.className = 'secondary'; back.type='button'; back.textContent='Back';
+  back.addEventListener('click', async()=>{ state.customerId=null; state.fieldId=null; await renderCustomersPremium(); });
+
+  const edit = document.createElement('button');
+  edit.className = 'secondary'; edit.type='button'; edit.textContent='Edit';
+
+  const del = document.createElement('button');
+  del.className = 'danger'; del.type='button'; del.textContent='Delete';
+
+  const addField = document.createElement('button');
+  addField.className = 'action'; addField.type='button'; addField.textContent='+ Add Field';
+
+  actions.append(edit, addField, del, back);
+  headRow.append(left, actions);
+
+  header.append(headRow);
+
+  // Customer info (human fields only)
+  const infoCard = document.createElement('div');
+  infoCard.className = 'card info-card';
+  const infoGrid = document.createElement('div');
+  infoGrid.className = 'info-grid';
+
+  const CUSTOMER_INFO_FIELDS = [
+    ['name', 'Name / Company'],
+    ['contact_name', 'Contact Name'],
+    ['phone', 'Phone'],
+    ['email', 'Email'],
+    ['notes', 'Notes'],
+  ];
+
+  CUSTOMER_INFO_FIELDS.forEach(([k,label])=>{
+    if (!Object.prototype.hasOwnProperty.call(customer||{}, k)) return;
+    const item = document.createElement('div');
+    item.className = 'info-item' + (k==='notes' ? ' info-span-2' : '');
+    const lab = document.createElement('div');
+    lab.className = 'info-label';
+    lab.textContent = label;
+    const val = document.createElement('div');
+    val.className = 'info-val';
+    val.textContent = (customer && customer[k] != null) ? String(customer[k]) : '';
+    item.append(lab, val);
+    infoGrid.appendChild(item);
+  });
+
+  infoCard.appendChild(infoGrid);
+
+  const fieldsCard = document.createElement('div');
+  fieldsCard.className = 'card section-stack';
+  const fieldsHead = document.createElement('div');
+  fieldsHead.className = 'section-title';
+  fieldsHead.textContent = 'Fields';
+  const fieldSearch = document.createElement('input');
+  fieldSearch.className='search';
+  fieldSearch.type='search';
+  fieldSearch.placeholder='Search fields for this customer…';
+
+  const list = document.createElement('div');
+  list.className = 'list field-list';
+
+  fieldsCard.append(fieldsHead, fieldSearch, list);
+
+  const jobsByField = new Map();
+  for (const j of jobsForCustomer){
+    const fid = j.field_id || j.fieldId;
+    if (!fid) continue;
+    if (!jobsByField.has(fid)) jobsByField.set(fid, []);
+    jobsByField.get(fid).push(j);
+  }
+
+  const renderFields = ()=>{
+    const q = fieldSearch.value.trim().toLowerCase();
+    list.innerHTML = '';
+    const filtered = custFields.filter(f=>{
+      if(!q) return true;
+      const hay = [f.name, f.address, f.brand, f.power_source].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+
+    if(!filtered.length){
+      list.appendChild(elTag('div',{className:'muted', text:'No fields found for this customer.'}));
+      return;
+    }
+
+    for (const f of filtered){
+      const fid = getFieldId(f);
+      const related = jobsByField.get(fid) || [];
+      const openPaused = related.filter(j=> {
+        const k = jobStatusKey(j);
+        return k==='open' || k==='paused' || k==='in_progress';
+      }).length;
+
+      const btn = document.createElement('button');
+      btn.type='button';
+      btn.className='pill field-row';
+      btn.innerHTML = `
+        <div class="row-main">
+          <div class="row-title">${f.name || 'Field'}</div>
+          <div class="row-sub muted">${[f.address, f.brand].filter(Boolean).join(' • ')}</div>
+        </div>
+        <div class="row-meta">
+          <span class="badge info">${openPaused} jobs</span>
+        </div>
+      `;
+      btn.addEventListener('click', async ()=>{
+        state.fieldId = fid;
+        await renderFieldFilePremium();
+      });
+      list.appendChild(btn);
+    }
+  };
+
+  fieldSearch.addEventListener('input', renderFields);
+
+  // Edit customer modal
+  edit.addEventListener('click', ()=>{
+    const body = document.createElement('div');
+    body.className='section-stack';
+    const form = document.createElement('div'); form.className='form-grid';
+    const fieldsDef = Object.keys(customer || {}).filter(k => !['created_at','updated_at'].includes(k));
+    const inputs = {};
+    fieldsDef.forEach((k)=>{
+      const label = prettyLabel(k);
+      const wrap=document.createElement('div');
+      const lab=document.createElement('label'); lab.textContent=label;
+      const inp=document.createElement('input'); inp.value = (customer[k]||''); inp.placeholder=label;
+      inputs[k]=inp; wrap.append(lab, inp); form.appendChild(wrap);
+    });
+    const foot=document.createElement('div'); foot.className='modal-foot';
+    const cancel=document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
+    const save=document.createElement('button'); save.className='action'; save.type='button'; save.textContent='Save';
+    foot.append(cancel, save);
+    body.append(form, foot);
+    const {close}=openModalSimple({title:'Edit Customer', bodyEl: body});
+    cancel.addEventListener('click', ()=>close());
+    save.addEventListener('click', async ()=>{
+      const payload = { ...customer, id: customerId, customer_id: customerId };
+      fieldsDef.forEach((k)=>{ if(inputs[k]) payload[k]=inputs[k].value.trim(); });
+      if(!payload.name) return showToast('Customer name is required.');
+      try{
+        await updateCustomer(payload);
+        await refreshBoot();
+        close();
+        await renderCustomerFilePremium();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+
+  // Delete customer
+  del.addEventListener('click', ()=>{
+    const body = document.createElement('div');
+    body.className='section-stack';
+    body.appendChild(elTag('div',{className:'muted', text:'Delete this customer? This cannot be undone.'}));
+    const foot=document.createElement('div'); foot.className='modal-foot';
+    const cancel=document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
+    const confirm=document.createElement('button'); confirm.className='danger'; confirm.type='button'; confirm.textContent='Delete';
+    foot.append(cancel, confirm);
+    body.appendChild(foot);
+    const {close}=openModalSimple({title:'Delete Customer', bodyEl: body});
+    cancel.addEventListener('click', ()=>close());
+    confirm.addEventListener('click', async ()=>{
+      try{
+        await deleteCustomer(customerId);
+        await refreshBoot();
+        close();
+        state.customerId=null; state.fieldId=null;
+        await renderCustomersPremium();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+
+  // Add Field modal
+  addField.addEventListener('click', ()=>{
+    const body=document.createElement('div'); body.className='section-stack';
+    const form=document.createElement('div'); form.className='form-grid';
+    const fieldsDef = [
+      ['name','Field Name'], ['brand','Brand'], ['power_source','Power Source'],
+      ['serial_number','Serial Number'], ['tower_count','Tower Count'],
+      ['address','Address'], ['lat','Latitude'], ['lng','Longitude'],
+      ['sprinkler_package','Sprinkler Package #'], ['telemetry_make','Telemetry Make'], ['telemetry_serial','Telemetry Serial'],
+    ];
+    const inputs={};
+    fieldsDef.forEach((k)=>{
+      const label = prettyLabel(k);
+      const wrap=document.createElement('div');
+      const lab=document.createElement('label'); lab.textContent=label;
+      const inp=document.createElement('input'); inp.placeholder=label;
+      inputs[k]=inp; wrap.append(lab, inp); form.appendChild(wrap);
+    });
+    const foot=document.createElement('div'); foot.className='modal-foot';
+    const cancel=document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
+    const save=document.createElement('button'); save.className='action'; save.type='button'; save.textContent='Save';
+    foot.append(cancel, save);
+    body.append(form, foot);
+    const {close}=openModalSimple({title:'Add Field', bodyEl: body});
+    cancel.addEventListener('click', ()=>close());
+    save.addEventListener('click', async ()=>{
+      const payload = { customer_id: customerId };
+      fieldsDef.forEach((k)=>{ if(inputs[k]) payload[k]=inputs[k].value.trim(); });
+      if(!payload.name) return showToast('Field name is required.');
+      try{
+        await createField(payload);
+        await refreshBoot();
+        close();
+        await renderCustomerFilePremium();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+
+  // Render
+  viewContainer.innerHTML = '';
+  const stack = document.createElement('div');
+  stack.className = 'section-stack';
+  stack.append(header, fieldsCard);
+  viewContainer.appendChild(stack);
+  renderFields();
+}
+
+async function renderFieldFilePremium() {
+  const fieldId = state.fieldId;
+  if (!fieldId) return renderCustomerFilePremium();
+
+  const fields = await listFields();
+  const field = fields.find((f)=> getFieldId(f) === fieldId);
+  if (!field) { state.fieldId=null; return renderCustomerFilePremium(); }
+
+  const customers = await listCustomers();
+  const customer = customers.find(c=> getCustomerId(c) === (field.customer_id || field.customerId));
+
+  const jobs = await fetchAllJobsSafe();
+  const jobsForField = jobs.filter((j)=> (j.field_id || j.fieldId) === fieldId);
+
+  // Sort: open-like first, finished last, newest -> oldest inside groups
+  const rank = (j)=>{
+    const k = jobStatusKey(j);
+    if (k==='open') return 0;
+    if (k==='in_progress') return 1;
+    if (k==='paused') return 2;
+    return 3;
+  };
+  jobsForField.sort((a,b)=>{
+    const ra=rank(a), rb=rank(b);
+    if (ra!==rb) return ra-rb;
+    const ta = new Date(a.created_at || a.createdAt || a.inserted_at || 0).getTime();
+    const tb = new Date(b.created_at || b.createdAt || b.inserted_at || 0).getTime();
+    return tb-ta;
+  });
+
+  viewTitle.textContent = field.name || 'Field';
+  viewSubtitle.textContent = customer ? `Customer: ${customer.name}` : 'Field file';
+  viewActions.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className='card section-stack';
+
+  const headRow = document.createElement('div');
+  headRow.className='detail-head';
+
+  const left = document.createElement('div');
+  left.className='detail-left';
+  left.innerHTML = `
+    <div class="detail-title">${field.name || 'Field'}</div>
+    <div class="detail-sub muted">${[field.address, field.brand, field.power_source].filter(Boolean).join(' • ')}</div>
+  `;
+
+  const actions = document.createElement('div');
+  actions.className='detail-actions';
+
+  const back = document.createElement('button'); back.className='secondary'; back.type='button'; back.textContent='Back';
+  back.addEventListener('click', async ()=>{ state.fieldId=null; await renderCustomerFilePremium(); });
+
+  const edit = document.createElement('button'); edit.className='secondary'; edit.type='button'; edit.textContent='Edit';
+  const del = document.createElement('button'); del.className='danger'; del.type='button'; del.textContent='Delete';
+
+  actions.append(edit, del, back);
+  headRow.append(left, actions);
+  header.append(headRow);
+
+  // Customer info (simple: name / phone / email / address)
+  const infoCard = document.createElement('div');
+  infoCard.className = 'card info-card';
+  infoCard.appendChild(renderInfoGrid(field, { hideKeys: [] }));
+
+  const jobsCard = document.createElement('div');
+  jobsCard.className='card section-stack';
+  jobsCard.appendChild(elTag('div',{className:'section-title', text:'Jobs for this Field'}));
+  const list = document.createElement('div'); list.className='list';
+  jobsCard.appendChild(list);
+
+  for (const j of jobsForField){
+    const status = jobStatusKey(j);
+    const btn = document.createElement('button');
+    btn.type='button';
+    btn.className='pill job-row';
+    btn.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${j.title || j.description || j.job_id || j.id || 'Job'}</div>
+        <div class="row-sub muted">${(j.status || '').replaceAll('_',' ')}</div>
+      </div>
+      <div class="row-meta">
+        <span class="badge" data-status="${j.status || status}">${status.replace('_',' ')}</span>
+      </div>
+    `;
+    btn.addEventListener('click', ()=>{
+      // For now: hand off to existing job board detail rendering by switching job-board and filtering not required.
+      // You can extend to show report or job card in-place later without touching Supabase.
+      showToast(status === 'finished' ? 'Finished job: open reports view from Job Board.' : 'Open job: view details from Job Board.');
+    });
+    list.appendChild(btn);
+  }
+
+  // Edit field modal
+  edit.addEventListener('click', ()=>{
+    const body=document.createElement('div'); body.className='section-stack';
+    const form=document.createElement('div'); form.className='form-grid';
+    const fieldsDef = Object.keys(field || {}).filter(k => !['created_at','updated_at'].includes(k));
+    const inputs={};
+    fieldsDef.forEach((k)=>{
+      const label = prettyLabel(k);
+      const wrap=document.createElement('div');
+      const lab=document.createElement('label'); lab.textContent=label;
+      const inp = (k==='additional_info') ? document.createElement('textarea') : document.createElement('input');
+      inp.value = (field[k]||''); inp.placeholder=label;
+      inputs[k]=inp; wrap.append(lab, inp); form.appendChild(wrap);
+    });
+    const foot=document.createElement('div'); foot.className='modal-foot';
+    const cancel=document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
+    const save=document.createElement('button'); save.className='action'; save.type='button'; save.textContent='Save';
+    foot.append(cancel, save);
+    body.append(form, foot);
+    const {close}=openModalSimple({title:'Edit Field', bodyEl: body});
+    cancel.addEventListener('click', ()=>close());
+    save.addEventListener('click', async ()=>{
+      const payload = { ...field, id: fieldId, field_id: fieldId };
+      fieldsDef.forEach((k)=>{ if(inputs[k]) payload[k]=inputs[k].value.trim(); });
+      if(!payload.name) return showToast('Field name is required.');
+      try{
+        await updateField(payload);
+        await refreshBoot();
+        close();
+        await renderFieldFilePremium();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+
+  // Delete field
+  del.addEventListener('click', ()=>{
+    const body=document.createElement('div'); body.className='section-stack';
+    body.appendChild(elTag('div',{className:'muted', text:'Delete this field? This cannot be undone.'}));
+    const foot=document.createElement('div'); foot.className='modal-foot';
+    const cancel=document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
+    const confirm=document.createElement('button'); confirm.className='danger'; confirm.type='button'; confirm.textContent='Delete';
+    foot.append(cancel, confirm);
+    body.appendChild(foot);
+    const {close}=openModalSimple({title:'Delete Field', bodyEl: body});
+    cancel.addEventListener('click', ()=>close());
+    confirm.addEventListener('click', async ()=>{
+      try{
+        await deleteField(fieldId);
+        await refreshBoot();
+        close();
+        state.fieldId=null;
+        await renderCustomerFilePremium();
+      }catch(e){ showToast(e.message); }
+    });
+  });
+
+  viewContainer.innerHTML='';
+  const stack=document.createElement('div'); stack.className='section-stack';
+  stack.append(header, jobsCard);
+  viewContainer.appendChild(stack);
+}
+
 const viewHandlers = {
   'job-board': renderJobBoard,
-  customers: () => renderListView({
-    title: 'Customers',
-    subtitle: 'Manage customer profiles.',
-    listLoader: listCustomers,
-    createHandler: createCustomer,
-    updateHandler: updateCustomer,
-    deleteHandler: deleteCustomer,
-    enableImportExport: true,
-    filePrefix: 'customers',
-    fields: [
-      { key: 'name', label: 'Customer Name' },
-      { key: 'contact_name', label: 'Contact Name' },
-      { key: 'phone', label: 'Phone' },
-      { key: 'email', label: 'Email' },
-      { key: 'notes', label: 'Notes', type: 'textarea' },
-    ],
-  }),
+  customers: renderCustomersPremium,
+  fields: () => setView('customers'),
   fields: () => renderListView({
     title: 'Fields',
     subtitle: 'Manage service locations.',
@@ -995,5 +1854,90 @@ function bindNav() {
   });
 }
 
+
+function bindHamburgerMenuUI() {
+  const modal = document.getElementById('menu-modal');
+  const openBtn = document.getElementById('open-menu');
+  const closeBtn = document.getElementById('close-menu');
+  const scrim = document.getElementById('menu-scrim');
+  if (!modal || !openBtn || !closeBtn || !scrim) return;
+
+  const open = () => { modal.hidden = false; };
+  const close = () => { modal.hidden = true; };
+
+  openBtn.addEventListener('click', open);
+  closeBtn.addEventListener('click', close);
+  scrim.addEventListener('click', close);
+
+  document.addEventListener('keydown', (e) => {
+    if (!modal.hidden && e.key === 'Escape') close();
+  });
+
+  modal.querySelectorAll('[data-view]').forEach((btn) => {
+    btn.addEventListener('click', () => close());
+  });
+}
+
+async function updateQuickViewCounts() {
+  const nodes = document.querySelectorAll('[data-count]');
+  if (!nodes.length) return;
+
+  try {
+    const jobs = await fetchAllJobsSafe();
+    const counts = { open:0, paused:0, in_progress:0, finished:0 };
+    for (const j of jobs){
+      const k = jobStatusKey(j);
+      if (k==='paused') counts.paused++;
+      else if (k==='in_progress') counts.in_progress++;
+      else if (k==='finished') counts.finished++;
+      else counts.open++;
+    }
+    const set = (key,val)=> document.querySelectorAll(`[data-count="${key}"]`).forEach(el=> el.textContent=String(val));
+    set('open', counts.open);
+    set('paused', counts.paused);
+    set('in_progress', counts.in_progress);
+    set('finished', counts.finished);
+  } catch(e) {}
+  try {
+    const reqs = await listRequests();
+    document.querySelectorAll('[data-count="requests"]').forEach(el=> el.textContent=String(reqs.length));
+  } catch(e) {}
+  try {
+    const oos = await listOutOfStock();
+    document.querySelectorAll('[data-count="out_of_stock"]').forEach(el=> el.textContent=String(oos.length));
+  } catch(e) {}
+}
+
+function bindQuickViews() {
+  const wrap = document.getElementById('quick-views');
+  if (!wrap) return;
+  wrap.querySelectorAll('button[data-qv]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const qv = btn.dataset.qv;
+      if (!qv) return;
+      if (qv === 'requests') return setView('requests');
+      if (qv === 'out-of-stock') return setView('out-of-stock');
+      await setView('job-board');
+      await new Promise((r) => setTimeout(r, 0));
+      await renderJobBoardList(qv);
+    });
+  });
+}
+
+function bindCreateJobShortcut() {
+  const btn = document.getElementById('create-job-btn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    await setView('job-board');
+    await new Promise((r)=>setTimeout(r,0));
+    const b = Array.from(viewContainer.querySelectorAll('button.pill')).find(x=> (x.textContent||'').toLowerCase().includes('create job'));
+    if (b) b.click();
+  });
+}
+
 bindNav();
+bindHamburgerMenuUI();
+bindQuickViews();
+bindCreateJobShortcut();
 setView('job-board');
+updateQuickViewCounts();
