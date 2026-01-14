@@ -1362,6 +1362,7 @@ async function renderCustomerFilePremium() {
   left.innerHTML = `
     <div class="detail-title">${customer.name || 'Customer'}</div>
     <div class="detail-sub muted">${[customer.phone, customer.email, customer.address].filter(Boolean).join(' • ')}</div>
+     ${customer.notes ? `<div class="detail-sub muted">${escapeHtml(customer.notes)}</div>` : ''}
   `;
 
   const actions = document.createElement('div');
