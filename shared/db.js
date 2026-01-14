@@ -3,6 +3,8 @@ import { getConfig } from './config.js';
 import { JOB_STATUSES } from './types.js';
 
 let client;
+let jobStatusRpcSupported;
+let jobStatusRpcCheck;
 
 function getClient() {
   if (client) return client;
@@ -28,6 +30,37 @@ function handleError(error, context) {
     const message = error.message || 'Unexpected error.';
     throw new Error(`${context}: ${message}`);
   }
+}
+async function checkJobStatusRpcSupport() {
+  if (jobStatusRpcSupported !== undefined) return jobStatusRpcSupported;
+  if (jobStatusRpcCheck) return jobStatusRpcCheck;
+  const { supabaseUrl, supabaseAnonKey } = getConfig();
+  if (!supabaseUrl || !supabaseAnonKey) {
+    jobStatusRpcSupported = false;
+    return jobStatusRpcSupported;
+  }
+  jobStatusRpcCheck = fetch(`${supabaseUrl}/rest/v1/`, {
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
+      Accept: 'application/openapi+json',
+    },
+  })
+    .then(async (response) => {
+      if (!response.ok) return false;
+      const schema = await response.json();
+      return Boolean(schema?.paths?.['/rpc/set_job_status']);
+    })
+    .catch((error) => {
+      console.warn('Unable to check RPC schema; skipping set_job_status.', error);
+      return false;
+    })
+    .then((supported) => {
+      jobStatusRpcSupported = supported;
+      jobStatusRpcCheck = null;
+      return supported;
+    });
+  return jobStatusRpcCheck;
 }
 
 async function listTable(table) {
@@ -243,7 +276,7 @@ export async function createJob(payload) {
     org_id: orgId,
   });
   try {
-    await setJobStatus(data.id, data.status, { note: 'Created job' });
+    await setJobStatus(data.id, data.status, { notes: 'Created job' });
   } catch (error) {
     if (error.message?.includes('set_job_status')) {
       console.warn('Missing set_job_status RPC; skipping status event.', error);
@@ -268,6 +301,11 @@ export async function markJobInvoiced(id) {
 
 export async function setJobStatus(jobId, status, options = {}) {
   const orgId = requireOrgId();
+  const supportsRpc = await checkJobStatusRpcSupport();
+  if (!supportsRpc) {
+    await updateTable('jobs', jobId, { status });
+    return;
+  }
   const { error } = await getClient().rpc('set_job_status', {
     p_org_id: orgId,
     p_job_id: jobId,
@@ -275,6 +313,12 @@ export async function setJobStatus(jobId, status, options = {}) {
     p_notes: options.notes,
     p_last_active_status: options.lastActiveStatus,
   });
+  if (error?.code === 'PGRST202' && error.message?.includes('set_job_status')){
+    jobStatusRpcSupported = false;
+    await updateTable('jobs', jobId, {status });
+      console.warn('Missing set-job_status RPC; skipping status event.', error);
+    return;
+  }
   handleError(error, 'Set job status');
 }
 
