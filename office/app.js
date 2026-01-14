@@ -1289,13 +1289,32 @@ async function renderCustomersPremium() {
      
     ];
     const inputs = {};
-   fields.forEach(([key, label])=>{
+    const formatPhone = (value) => {
+      const digits = value.replace(/\D/g, '').slice(0, 10);
+      const area = digits.slice(0, 3);
+      const mid = digits.slice(3, 6);
+      const tail = digits.slice(6, 10);
+
+      if (digits.length <= 3) return area;
+      if (digits.length <= 6) return `(${area}) ${mid}`;
+      return `(${area}) ${mid}-${tail}`;
+    };
+    fields.forEach(([key, label]) => {
       const wrap = document.createElement('div');
-     const lab = document.createElement('label ');
-     lab.textContent = label;
-     const inp = document.createElement('input');
-     inp.name = key;
-     inputs[key]=inp;
+     const lab = document.createElement('label');
+      lab.textContent = label;
+      const inp = document.createElement('input');
+      inp.name = key;
+      if (key === 'phone') {
+        inp.inputMode = 'tel';
+        inp.maxLength = 14;
+        inp.pattern = '\\(\\d{3}\\) \\d{3}-\\d{4}';
+        inp.placeholder = '(###) ###-####';
+        inp.addEventListener('input', () => {
+          inp.value = formatPhone(inp.value);
+        });
+      }
+      inputs[key] = inp;
       wrap.append(lab, inp);
       form.appendChild(wrap);
     });
