@@ -128,6 +128,50 @@
       </div>
       <button class="modal-scrim" id="menu-scrim" aria-label="Close menu"></button>
     </div>
+    <div class="modal" id="create-job-modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Create Job">
+        <div class="modal-head">
+          <div class="modal-title">Create Job</div>
+          <button class="pill tiny" id="close-create-job" type="button">Close</button>
+        </div>
+
+        <form id="create-job-form" class="section-stack">
+          <div class="form-grid">
+            <div>
+              <label for="create-job-customer">Customer</label>
+              <input id="create-job-customer" name="customer_name" list="customer-options" placeholder="Search customer" autocomplete="off" required />
+              <input name="customer_id" type="hidden" />
+              <datalist id="customer-options"></datalist>
+            </div>
+            <div>
+              <label for="create-job-field">Field</label>
+              <input id="create-job-field" name="field_name" list="field-options" placeholder="Select field" autocomplete="off" required disabled />
+              <input name="field_id" type="hidden" />
+              <datalist id="field-options"></datalist>
+            </div>
+            <div>
+              <label for="create-job-type">Job Type</label>
+              <select id="create-job-type" name="job_type_id" required></select>
+            </div>
+          </div>
+          <div>
+            <label for="create-job-description">Description of the problem</label>
+            <textarea id="create-job-description" name="description" placeholder="Describe the issue" required></textarea>
+          </div>
+          <div>
+            <label for="create-job-attachment">Attachment</label>
+            <input id="create-job-attachment" type="file" name="attachment" accept="application/pdf,image/*" />
+            <div class="muted small">PDF or image files supported.</div>
+          </div>
+          <div class="modal-foot">
+            <button class="secondary" id="cancel-create-job" type="button">Cancel</button>
+            <button class="action" type="submit">Save Job</button>
+          </div>
+        </form>
+      </div>
+      <button class="modal-scrim" id="create-job-scrim" aria-label="Close create job"></button>
+    </div>
+
 
     <div id="toast" class="toast" hidden></div>
     <script type="module" src="./app.js"></script>

@@ -242,7 +242,15 @@ export async function createJob(payload) {
     status: payload.status || JOB_STATUSES.OPEN,
     org_id: orgId,
   });
-  await setJobStatus(data.id, data.status, { note: 'Created job' });
+  try {
+    await setJobStatus(data.id, data.status, { note: 'Created job' });
+  } catch (error) {
+    if (error.message?.includes('set_job_status')) {
+      console.warn('Missing set_job_status RPC; skipping status event.', error);
+    } else {
+      throw error;
+    }
+  }
   return data;
 }
 

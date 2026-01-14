@@ -183,7 +183,7 @@ strong{ font-weight: 900; letter-spacing: .2px; }
 .pill{
   border: 1px solid transparent;
   background: var(--pill);
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--r-999);
   text-align: left;
   font-weight: 900;
@@ -519,6 +519,11 @@ input[type="file"]{
   border: 1px solid var(--border);
   background: rgba(255,255,255,.05);
   color: var(--muted);
+}
+#create-job-form input[type="file"]{
+  max-width: none;
+  width: 100%;
+  border-radius: var(--r-14);
 }
 
 /* Dark select arrow */
@@ -1077,6 +1082,7 @@ button.action.wide{
   justify-content:space-between !important;
   gap: 12px !important;
   border-radius: 16px !important;
+  padding: 10px 12px !important;
 }
 
 .list-row .row-meta{

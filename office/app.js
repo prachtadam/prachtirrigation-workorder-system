@@ -48,8 +48,10 @@ import {
   deleteReceipt,
   markJobInvoiced,
   cancelJob,
+  addAttachment,
+  getSupabaseClient,
 } from '../shared/db.js';
-import { saveConfig } from '../shared/config.js';
+import { getConfig, saveConfig } from '../shared/config.js';
 import { JOB_STATUSES } from '../shared/types.js';
 
 const viewTitle = document.getElementById('view-title');
@@ -195,59 +197,7 @@ async function renderJobBoardList(filterId) {
   createButton.className = 'pill';
   createButton.textContent = '+ Create Job';
   createButton.addEventListener('click', () => {
-    detailPanel.innerHTML = `
-      <h3>Create Job</h3>
-      <form id="create-job-form" class="section-stack">
-        <label>Customer</label>
-        <select name="customer_id">
-          ${state.boot.customers.map((customer) => `<option value="${customer.id}">${customer.name}</option>`).join('')}
-        </select>
-        <label>Field</label>
-        <select name="field_id">
-          ${state.boot.fields.map((field) => `<option value="${field.id}">${field.name}</option>`).join('')}
-        </select>
-        <label>Job Type</label>
-        <select name="job_type_id">
-          ${state.boot.jobTypes.map((jobType) => `<option value="${jobType.id}">${jobType.name}</option>`).join('')}
-        </select>
-        <label>Truck</label>
-        <select name="truck_id">
-          <option value="">Unassigned</option>
-          ${state.boot.trucks.map((truck) => `<option value="${truck.id}">${truck.truck_identifier}</option>`).join('')}
-        </select>
-        <label>Tech</label>
-        <select name="tech_id">
-          <option value="">Unassigned</option>
-          ${state.boot.users.map((user) => `<option value="${user.id}">${user.full_name}</option>`).join('')}
-        </select>
-        <label>Description</label>
-        <textarea name="description"></textarea>
-        <label>Office Notes</label>
-        <textarea name="office_notes"></textarea>
-        <button class="action" type="submit">Create Job</button>
-      </form>
-    `;
-    detailPanel.querySelector('#create-job-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = event.target;
-      const payload = {
-        customer_id: form.customer_id.value,
-        field_id: form.field_id.value,
-        job_type_id: form.job_type_id.value,
-        truck_id: form.truck_id.value || null,
-        tech_id: form.tech_id.value || null,
-        description: form.description.value,
-        office_notes: form.office_notes.value,
-        status: JOB_STATUSES.OPEN,
-      };
-      try {
-        await createJob(payload);
-        showToast('Job created.');
-        await renderJobBoardList(filterId);
-      } catch (error) {
-        showToast(error.message);
-      }
-    });
+  openCreateJobModal();
   });
   listPanel.appendChild(createButton);
 
@@ -369,6 +319,109 @@ async function renderJobBoardList(filterId) {
   listWrapper.appendChild(grid);
   viewContainer.innerHTML = '';
   viewContainer.appendChild(listWrapper);
+}
+function buildDatalistOptions(listNode, items = [], key = 'name') {
+  listNode.innerHTML = items
+    .map((item) => `<option value="${item[key]}"></option>`)
+    .join('');
+}
+
+function getItemByName(items, name) {
+  const normalized = name?.trim().toLowerCase();
+  if (!normalized) return null;
+  return items.find((item) => item.name?.toLowerCase() === normalized) || null;
+}
+
+async function uploadJobAttachment(jobId, file) {
+  if (!file) return null;
+  const client = getSupabaseClient();
+  const { orgId } = getConfig();
+  const sanitizedName = file.name.replace(/\s+/g, '_');
+  const path = `${orgId}/${jobId}/attachments/${Date.now()}-${sanitizedName}`;
+  const { error } = await client.storage.from('job_reports').upload(path, file, {
+    upsert: true,
+    contentType: file.type || undefined,
+  });
+  if (error) {
+    console.error('Attachment upload error', error);
+    throw new Error('Unable to upload attachment.');
+  }
+  const { data } = client.storage.from('job_reports').getPublicUrl(path);
+  return data.publicUrl;
+}
+
+async function openCreateJobModal() {
+  const modal = document.getElementById('create-job-modal');
+  const form = document.getElementById('create-job-form');
+  const customerInput = form?.querySelector('input[name="customer_name"]');
+  const customerIdInput = form?.querySelector('input[name="customer_id"]');
+  const fieldInput = form?.querySelector('input[name="field_name"]');
+  const fieldIdInput = form?.querySelector('input[name="field_id"]');
+  const customerList = document.getElementById('customer-options');
+  const fieldList = document.getElementById('field-options');
+  const jobTypeSelect = form?.querySelector('select[name="job_type_id"]');
+
+  if (!modal || !form || !customerInput || !fieldInput || !jobTypeSelect || !customerList || !fieldList) return;
+  if (!state.boot) await refreshBoot();
+
+  form.reset();
+  customerIdInput.value = '';
+  fieldIdInput.value = '';
+  fieldInput.value = '';
+  fieldInput.disabled = true;
+
+  buildDatalistOptions(customerList, state.boot.customers);
+  jobTypeSelect.innerHTML = state.boot.jobTypes
+    .map((jobType) => `<option value="${jobType.id}">${jobType.name}</option>`)
+    .join('');
+
+  const updateFieldOptions = () => {
+    const selectedCustomer = getItemByName(state.boot.customers, customerInput.value);
+    if (!selectedCustomer) {
+      fieldInput.disabled = true;
+      fieldInput.value = '';
+      fieldIdInput.value = '';
+      fieldList.innerHTML = '';
+      return;
+    }
+    customerIdInput.value = selectedCustomer.id;
+    fieldInput.value = '';
+    fieldIdInput.value = '';
+    const fields = state.boot.fields.filter((field) => field.customer_id === selectedCustomer.id);
+    buildDatalistOptions(fieldList, fields);
+    fieldInput.disabled = fields.length === 0;
+    fieldInput.placeholder = fields.length ? 'Select field' : 'No fields for customer';
+  };
+
+  const syncFieldId = () => {
+    const selectedCustomer = getItemByName(state.boot.customers, customerInput.value);
+    if (!selectedCustomer) {
+      fieldIdInput.value = '';
+      return;
+    }
+    const fields = state.boot.fields.filter((field) => field.customer_id === selectedCustomer.id);
+    const selectedField = getItemByName(fields, fieldInput.value);
+    fieldIdInput.value = selectedField?.id || '';
+  };
+
+  customerInput.oninput = updateFieldOptions;
+  customerInput.onchange = updateFieldOptions;
+  fieldInput.oninput = syncFieldId;
+  fieldInput.onchange = syncFieldId;
+
+  modal.hidden = false;
+}
+
+async function closeCreateJobModal({ returnHome = false } = {}) {
+  const modal = document.getElementById('create-job-modal');
+  if (modal) {
+    const form = modal.querySelector('form');
+    if (form) form.reset();
+    modal.hidden = true;
+  }
+  if (returnHome) {
+    await setView('job-board');
+  }
 }
 
 async function renderListView({
@@ -2508,11 +2561,75 @@ function bindQuickViews() {
 function bindCreateJobShortcut() {
   const btn = document.getElementById('create-job-btn');
   if (!btn) return;
-  btn.addEventListener('click', async () => {
-    await setView('job-board');
-    await new Promise((r)=>setTimeout(r,0));
-    const b = Array.from(viewContainer.querySelectorAll('button.pill')).find(x=> (x.textContent||'').toLowerCase().includes('create job'));
-    if (b) b.click();
+  btn.addEventListener('click', () => {
+    openCreateJobModal();
+  });
+}
+
+function bindCreateJobModal() {
+  const modal = document.getElementById('create-job-modal');
+  const closeBtn = document.getElementById('close-create-job');
+  const cancelBtn = document.getElementById('cancel-create-job');
+  const scrim = document.getElementById('create-job-scrim');
+  const form = document.getElementById('create-job-form');
+
+  if (!modal || !closeBtn || !cancelBtn || !scrim || !form) return;
+
+  const close = () => closeCreateJobModal({ returnHome: true });
+  closeBtn.addEventListener('click', close);
+  cancelBtn.addEventListener('click', close);
+  scrim.addEventListener('click', close);
+  document.addEventListener('keydown', (e) => {
+    if (!modal.hidden && e.key === 'Escape') close();
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const customerId = form.elements.customer_id.value;
+    const fieldId = form.elements.field_id.value;
+    const jobTypeId = form.elements.job_type_id.value;
+    const description = form.elements.description.value.trim();
+    const attachment = form.elements.attachment.files?.[0];
+
+    if (!customerId || !fieldId || !jobTypeId) {
+      showToast('Select a customer, field, and job type.');
+      return;
+    }
+    if (!description) {
+      showToast('Add a description before saving.');
+      return;
+    }
+
+    const saveBtn = form.querySelector('button[type="submit"]');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      const payload = {
+        customer_id: customerId,
+        field_id: fieldId,
+        job_type_id: jobTypeId,
+        description,
+        status: JOB_STATUSES.OPEN,
+      };
+      const job = await createJob(payload);
+
+      if (attachment) {
+        const url = await uploadJobAttachment(job.id, attachment);
+        await addAttachment({
+          job_id: job.id,
+          attachment_type: attachment.name,
+          file_url: url,
+        });
+      }
+
+      showToast('Job created.');
+      await closeCreateJobModal({ returnHome: true });
+      await updateQuickViewCounts();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
   });
 }
 
@@ -2520,5 +2637,6 @@ bindNav();
 bindHamburgerMenuUI();
 bindQuickViews();
 bindCreateJobShortcut();
+bindCreateJobModal();
 setView('job-board');
 updateQuickViewCounts();
