@@ -1584,7 +1584,7 @@ async function renderCustomerFilePremium() {
     save.addEventListener('click', async ()=>{
       const payload = { customer_id: customerId };
       fieldsDef.forEach((key)=>{ if(inputs[key]) payload[key]=inputs[key].value.trim(); });
-      if(!payload.name) return showToast('Field name is required.');
+      
       try{
         await createField(payload);
         await refreshBoot();
