@@ -1558,7 +1558,7 @@ async function renderCustomerFilePremium() {
       ['tower_count', 'Tower Count'],
       ['address', 'Address'],
       ['lat', 'Latitude'],
-      ['lng', 'Longitude'],
+      ['lon', 'Longitude'],
       ['sprinkler_package', 'Sprinkler Package #'],
       ['telemetry_make', 'Telemetry Make'],
       ['telemetry_serial', 'Telemetry Serial'],
@@ -1583,8 +1583,9 @@ async function renderCustomerFilePremium() {
     cancel.addEventListener('click', ()=>close());
     save.addEventListener('click', async ()=>{
       const payload = { customer_id: customerId };
-      fieldsDef.forEach((key)=>{ if(inputs[key]) payload[key]=inputs[key].value.trim(); });
-      
+      fieldsDef.forEach(([key])=>{ if(inputs[key]) payload[key]=inputs[key].value.trim(); });
+    const fieldName = payload.name || payload.field_name;
+      if(!fieldName) return showToast('Field name is required.');
       try{
         await createField(payload);
         await refreshBoot();
@@ -1672,7 +1673,7 @@ async function renderFieldFilePremium() {
     { label: 'Tower Count', keys: ['tower_count'] },
     { label: 'Address', keys: ['address'] },
     { label: 'Lat', keys: ['lat', 'latitude'] },
-    { label: 'Lon', keys: ['lon', 'lng', 'longitude'] },
+    { label: 'Lon', keys: ['lon', 'Longitude'] },
     { label: 'Sprinkler Package #', keys: ['sprinkler_package', 'sprinkler_package_number', 'sprinkler_package_no'] },
     { label: 'Telemetry Make', keys: ['telemetry_make'] },
     { label: 'Telemetry Serial', keys: ['telemetry_serial'] },
