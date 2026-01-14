@@ -973,9 +973,7 @@ function openRowEditModal(title, row, type, onSave){
     labelEl.textContent = spec.label || prettyLabel(k);
     labelEl.htmlFor = 'f_' + k;
 
-    const hint = document.createElement('div');
-    hint.className = 'field-hint';
-    hint.textContent = k; // supabase column key (debug/clarity)
+   
 
     const v = row?.[k];
 
@@ -996,7 +994,7 @@ function openRowEditModal(title, row, type, onSave){
     input.id = 'f_' + k;
     input.dataset.key = k;
 
-    wrap.append(labelEl, hint, input);
+    wrap.append(labelEl, input);
     form.appendChild(wrap);
     inputs[k] = input;
   });
@@ -1284,18 +1282,20 @@ async function renderCustomersPremium() {
     form.className = 'form-grid';
 
     const fields = [
-      ['name','Customer Name'],
-      ['phone','Phone'],
-      ['email','Email'],
-      ['address','Address'],
+      ['name', 'Customer Name'],
+      ['phone', 'Phone'],
+      ['email', 'Email'],
+      ['address', 'Address'],
+     
     ];
     const inputs = {};
-    fields.forEach((k)=>{
-      const label = prettyLabel(k);
+   fields.forEach(([key, label])=>{
       const wrap = document.createElement('div');
-      const lab = document.createElement('label'); lab.textContent = label;
-      const inp = document.createElement('input'); inp.name = k; inp.placeholder = label;
-      inputs[k]=inp;
+     const lab = document.createElement('label ');
+     lab.textContent = label;
+     const inp = document.createElement('input');
+     inp.name = key;
+     inputs[key]=inp;
       wrap.append(lab, inp);
       form.appendChild(wrap);
     });
@@ -1312,7 +1312,7 @@ async function renderCustomersPremium() {
     cancel.addEventListener('click', () => close());
     save.addEventListener('click', async () => {
       const payload = {};
-      fields.forEach(([k])=> payload[k] = inputs[k].value.trim());
+      fields.forEach(([key])=> payload[key] = inputs[key].value.trim());
       if (!payload.name) return showToast('Customer name is required.');
       try{
         await createCustomer(payload);
@@ -1550,18 +1550,28 @@ async function renderCustomerFilePremium() {
     const body=document.createElement('div'); body.className='section-stack';
     const form=document.createElement('div'); form.className='form-grid';
     const fieldsDef = [
-      ['name','Field Name'], ['brand','Brand'], ['power_source','Power Source'],
-      ['serial_number','Serial Number'], ['tower_count','Tower Count'],
-      ['address','Address'], ['lat','Latitude'], ['lng','Longitude'],
-      ['sprinkler_package','Sprinkler Package #'], ['telemetry_make','Telemetry Make'], ['telemetry_serial','Telemetry Serial'],
+     ['name', 'Field Name'],
+      ['brand', 'Brand'],
+      ['power_source', 'Power Source'],
+      ['serial_number', 'Serial Number'],
+      ['tower_count', 'Tower Count'],
+      ['address', 'Address'],
+      ['lat', 'Latitude'],
+      ['lng', 'Longitude'],
+      ['sprinkler_package', 'Sprinkler Package #'],
+      ['telemetry_make', 'Telemetry Make'],
+      ['telemetry_serial', 'Telemetry Serial'],
     ];
     const inputs={};
-    fieldsDef.forEach((k)=>{
-      const label = prettyLabel(k);
+   fieldsDef.forEach(([key, label])=>{
       const wrap=document.createElement('div');
-      const lab=document.createElement('label'); lab.textContent=label;
-      const inp=document.createElement('input'); inp.placeholder=label;
-      inputs[k]=inp; wrap.append(lab, inp); form.appendChild(wrap);
+       const lab=document.createElement('label');
+      lab.textContent=label;
+      const inp=document.createElement('input');
+      inp.name = key;
+      inputs[key]=inp;
+      wrap.append(lab, inp);
+      form.appendChild(wrap);
     });
     const foot=document.createElement('div'); foot.className='modal-foot';
     const cancel=document.createElement('button'); cancel.className='secondary'; cancel.type='button'; cancel.textContent='Cancel';
@@ -1572,7 +1582,7 @@ async function renderCustomerFilePremium() {
     cancel.addEventListener('click', ()=>close());
     save.addEventListener('click', async ()=>{
       const payload = { customer_id: customerId };
-      fieldsDef.forEach((k)=>{ if(inputs[k]) payload[k]=inputs[k].value.trim(); });
+      fieldsDef.forEach((key)=>{ if(inputs[key]) payload[key]=inputs[key].value.trim(); });
       if(!payload.name) return showToast('Field name is required.');
       try{
         await createField(payload);
@@ -1652,10 +1662,44 @@ async function renderFieldFilePremium() {
   headRow.append(left, actions);
   header.append(headRow);
 
-  // Customer info (simple: name / phone / email / address)
-  const infoCard = document.createElement('div');
-  infoCard.className = 'card info-card';
-  infoCard.appendChild(renderInfoGrid(field, { hideKeys: [] }));
+ const fieldInfoGrid = document.createElement('div');
+  fieldInfoGrid.className = 'info-grid';
+  const FIELD_INFO = [
+    { label: 'Brand', keys: ['brand'] },
+    { label: 'Power Source', keys: ['power_source'] },
+    { label: 'Serial Number', keys: ['serial_number', 'serial'] },
+    { label: 'Tower Count', keys: ['tower_count'] },
+    { label: 'Address', keys: ['address'] },
+    { label: 'Lat', keys: ['lat', 'latitude'] },
+    { label: 'Lon', keys: ['lon', 'lng', 'longitude'] },
+    { label: 'Sprinkler Package #', keys: ['sprinkler_package', 'sprinkler_package_number', 'sprinkler_package_no'] },
+    { label: 'Telemetry Make', keys: ['telemetry_make'] },
+    { label: 'Telemetry Serial', keys: ['telemetry_serial'] },
+  ];
+
+  const fieldValueFor = (keys) => {
+    for (const key of keys) {
+      if (field && field[key] !== undefined && field[key] !== null && String(field[key]).length) {
+        return String(field[key]);
+      }
+    }
+    return '';
+  };
+
+  FIELD_INFO.forEach(({ label, keys }) => {
+    const item = document.createElement('div');
+    item.className = 'info-item';
+    const lab = document.createElement('div');
+    lab.className = 'info-label';
+    lab.textContent = label;
+    const val = document.createElement('div');
+    val.className = 'info-val';
+    val.textContent = fieldValueFor(keys);
+    item.append(lab, val);
+    fieldInfoGrid.appendChild(item);
+  });
+
+  header.append(fieldInfoGrid);
 
   const jobsCard = document.createElement('div');
   jobsCard.className='card section-stack';
