@@ -440,12 +440,22 @@ async function renderJobMap(mapPanel, jobs, filterId) {
   });
 }
 
-async function openJobDetailModal(job, filterId) {
+async function openJobDetailModal(job, filterId, options = {}) {
   const durations = await getJobStatusDurations(job.id);
   const techAssigned = job.status === JOB_STATUSES.OPEN ? '' : (job.users?.full_name || '');
   const truckAssigned = job.status === JOB_STATUSES.OPEN ? '' : (job.trucks?.truck_identifier || job.trucks?.name || '');
   const description = job.description || '';
   const officeNotes = job.office_notes || '';
+   const { onRefresh } = options;
+  const refreshAfterUpdate = async () => {
+    if (typeof onRefresh === 'function') {
+      await onRefresh();
+      return;
+    }
+    if (filterId) {
+      await renderJobBoardList(filterId);
+    }
+  };
   const reportsMarkup = job.attachments?.length
     ? job.attachments
       .map((att) => `<a href="${att.file_url}" target="_blank">${escapeHtml(att.attachment_type)}</a>`)
@@ -523,7 +533,7 @@ async function openJobDetailModal(job, filterId) {
         await markJobInvoiced(job.id);
         showToast('Job marked invoiced.');
         close();
-        await renderJobBoardList(filterId);
+        await refreshAfterUpdate();
       } catch (error) {
         showToast(error.message);
       }
@@ -538,7 +548,8 @@ async function openJobDetailModal(job, filterId) {
         await cancelJob(job.id, reason);
         showToast('Job canceled.');
         close();
-        await renderJobBoardList(filterId);
+        await refreshAfterUpdate();
+
       } catch (error) {
         showToast(error.message);
       }
@@ -1121,6 +1132,7 @@ function renderSettings() {
   viewTitle.textContent = 'Settings';
   viewSubtitle.textContent = 'Configure Supabase connection for this device.';
   viewActions.innerHTML = '';
+  const config = getConfig();
 
   const card = document.createElement('div');
   card.className = 'card';
@@ -1139,17 +1151,41 @@ function renderSettings() {
           <label>Org ID</label>
           <input name="orgId" required />
         </div>
+         <div>
+          <label>Google Maps API Key</label>
+          <input name="googleMapsApiKey" placeholder="Paste browser API key" />
+        </div>
       </div>
       <button class="action" type="submit">Save Settings</button>
+      <div class="card settings-help">
+        <h4>Get a free Google Maps API key</h4>
+        <ol class="muted">
+          <li>Go to the Google Cloud Console and create/select a project.</li>
+          <li>Enable the <strong>Maps JavaScript API</strong> for the project.</li>
+          <li>Create an API key under <strong>APIs & Services → Credentials</strong>.</li>
+          <li>Optionally restrict the key to your site domain for security.</li>
+          <li>Paste the key above and save.</li>
+        </ol>
+        <a href="https://console.cloud.google.com/google/maps-apis/credentials" target="_blank" rel="noopener">
+          Open Google Maps credentials
+        </a>
+        <div class="muted small">Google provides a $200 monthly credit, which typically covers light usage.</div>
+      </div>
     </form>
   `;
-  card.querySelector('#settings-form').addEventListener('submit', (event) => {
+ const form = card.querySelector('#settings-form');
+  form.elements.supabaseUrl.value = config.supabaseUrl || '';
+  form.elements.supabaseAnonKey.value = config.supabaseAnonKey || '';
+  form.elements.orgId.value = config.orgId || '';
+  form.elements.googleMapsApiKey.value = config.googleMapsApiKey || '';
+  form.addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.target);
     saveConfig({
       supabaseUrl: data.get('supabaseUrl'),
       supabaseAnonKey: data.get('supabaseAnonKey'),
       orgId: data.get('orgId'),
+      googleMapsApiKey: data.get('googleMapsApiKey'),
     });
     showToast('Settings saved. Reload to refresh data.');
   });
@@ -2032,11 +2068,7 @@ async function renderFieldFilePremium() {
         <span class="badge" data-status="${j.status || status}">${status.replace('_',' ')}</span>
       </div>
     `;
-    btn.addEventListener('click', ()=>{
-      // For now: hand off to existing job board detail rendering by switching job-board and filtering not required.
-      // You can extend to show report or job card in-place later without touching Supabase.
-      showToast(status === 'finished' ? 'Finished job: open reports view from Job Board.' : 'Open job: view details from Job Board.');
-    });
+    openJobDetailModal(j, null, { onRefresh: renderFieldFilePremium});
     list.appendChild(btn);
   }
 

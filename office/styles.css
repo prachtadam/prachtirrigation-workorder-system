@@ -1144,6 +1144,9 @@ button.action.wide{
 .modal-card{
   position:relative;
   width: min(820px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
   border-radius: 18px;
   padding: 14px;
   border: 1px solid rgba(255,255,255,.12);
@@ -1151,7 +1154,11 @@ button.action.wide{
   box-shadow: 0 20px 60px rgba(0,0,0,.55);
   z-index: 51;
 }
-
+.modal-body{
+  overflow: auto;
+  min-height: 0;
+  padding: 6px;
+}
 .modal-head{
   display:flex;
   align-items:center;
@@ -1340,6 +1347,16 @@ button.action.wide{
 .form-grid label{ display:block; margin-bottom: 4px; font-size: 13px; color: rgba(232,238,247,.85); font-weight: 850; }
 .field-hint{ font-size: 11px; color: rgba(232,238,247,.45); margin-bottom: 8px; }
 .readonly{ opacity: .7; cursor: not-allowed; }
+
+.settings-help{
+  margin-top: 12px;
+  }
+  .settings-help ol{
+    margin: 8px 0 12px;
+    padding-left: 18px;
+  }
+  .settings-help li{ margin-bottom: 6px;}
+  .settings-help a{font-weight:  800;}
 
 .modal-foot{
   display:flex;

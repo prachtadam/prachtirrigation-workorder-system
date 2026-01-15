@@ -291,8 +291,7 @@ export async function updateJob(id, payload) { return updateTable('jobs', id, pa
 
 export async function cancelJob(id, reason) {
   const { error } = await getClient().rpc('cancel_job', { p_job_id: id, p_reason: reason });
-   if (error?.code === 'PGRST202' && error.message?.includes('cancel_job')) {
-    console.warn('Missing cancel_job RPC; falling back to status update.', error);
+  if (error?.code === 'PGRST202' && error.message?.includes('cancel_job')){
     await setJobStatus(id, JOB_STATUSES.CANCELED, { notes: reason });
     return;
   }
