@@ -348,9 +348,8 @@ async function renderJobMap(mapPanel, jobs, filterId) {
     mapOverlay.textContent = 'No active jobs with field coordinates to display.';
     return;
   }
-if (!window.L) {
+    if (!window.L){
     mapOverlay.textContent = 'Map preview required Leaflet to load.';
-}
     return;
   }
 
@@ -374,17 +373,16 @@ if (!window.L) {
         },
       ).addTo(map);
 
-      const bounds = window.L.latLngBounds(coords.Jobs.map(({ coords }) => coords));
+      const bounds = window.L.latLngBounds(coordsJobs.map(({ coords }) => coords));
       map.fitBounds(bounds.pad(0.2));
       
 
- const markersLayer = window.L.layerGroup().addTo(map);
- mapState.markersLayer = markersLayer;
-
-  coordsJobs.forEach(({ job, coords }) => {
-   const marker = window.L.marker(coords, {
-      title: job.customers?.name || 'Job',
-     icon: buildLeafletMarkerIcon(mapStatusColor(job.status)),
+const markersLayer = window.L.layerGroup().addTo(map);
+  mapState.markersLayer = markersLayer;
+     coordsJobs.forEach(({ job, coords }) => {
+        const marker = window.L.marker(coords, {
+          title: job.customers?.name || 'Job',
+           icon: buildLeafletMarkerIcon(mapStatusColor(job.status)),
     });
 
     marker.addTo(markersLayer);
@@ -405,10 +403,10 @@ if (!window.L) {
       map.closePopup();
       openJobDetailModal(job, filterId);
     });
-  content.appendChild(openBtn);
-  marker.bindPopup(content, {closeButton: true, autoPan: true});
+     content.appendChild(openBtn);
+    marker.bindPopup(content, { closeButton: true, autoPan: true });
   });
-
+}
 
 async function openJobDetailModal(job, filterId, options = {}) {
   const durations = await getJobStatusDurations(job.id);
