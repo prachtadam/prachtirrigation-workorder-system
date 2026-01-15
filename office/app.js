@@ -98,7 +98,7 @@ function formatAgeDaysHours(dateValue) {
   const totalHours = Math.floor(diffMs / 3600000);
   const days = Math.floor(totalHours / 24);
   const hours = totalHours % 24;
-  return `${days}:${String(hours).padStart(2, '0')}`;
+ return `${days}D ${hours}H`;
 }
 function statusLabel(status) {
   return status.replace(/_/g, ' ').toUpperCase();
@@ -155,23 +155,7 @@ async function renderJobBoard() {
   viewSubtitle.textContent = 'Filter by status and review job cards.';
   viewActions.innerHTML = '';
 
-  const filterButtons = document.createElement('div');
-  filterButtons.className = 'toolbar-actions';
-  const filters = [
-    { id: 'open', label: 'Open Jobs' },
-    { id: 'in_progress', label: 'In Progress' },
-    { id: 'paused', label: 'Paused' },
-    { id: 'finished', label: 'Finished' },
-    { id: 'invoiced', label: 'Closed/Invoiced' },
-  ];
-  filters.forEach((filter) => {
-    const btn = document.createElement('button');
-    btn.className = 'pill';
-    btn.textContent = filter.label;
-    btn.addEventListener('click', () => renderJobBoardList(filter.id));
-    filterButtons.appendChild(btn);
-  });
-  viewActions.appendChild(filterButtons);
+ 
 
   await renderJobBoardList('open');
 }
@@ -193,8 +177,24 @@ async function renderJobBoardList(filterId) {
   listWrapper.className = 'section-stack';
 
   const mapPanel = document.createElement('div');
-  mapPanel.className = 'map-placeholder';
-  mapPanel.textContent = 'Map view placeholder (connect to mapping provider).';
+  mapPanel.className = 'map-preview';
+  mapPanel.innerHTML = `
+    <div class="map-head">
+      <div>
+        <div class="map-title">Map Preview</div>
+        <div class="muted small">Satellite view • click map to open Google Maps</div>
+      </div>
+      <div class="map-legend">
+        <span><span class="legend-dot legend-open"></span>Open</span>
+        <span><span class="legend-dot legend-progress"></span>In Progress</span>
+        <span><span class="legend-dot legend-paused"></span>Paused</span>
+      </div>
+    </div>
+    <div class="map-frame">
+      <div class="map-canvas" role="img" aria-label="Job map preview"></div>
+      <div class="map-overlay">Loading map preview…</div>
+    </div>
+  `;
 
   const listPanel = document.createElement('div');
   listPanel.className = 'card list';
@@ -214,6 +214,7 @@ async function renderJobBoardList(filterId) {
     paused: { statuses: [JOB_STATUSES.PAUSED] },
     finished: { statuses: [JOB_STATUSES.FINISHED] },
     invoiced: { statuses: [JOB_STATUSES.INVOICED] },
+    closed: { statuses: [JOB_STATUSES.INVOICED, JOB_STATUSES.CANCELED] },
   };
 
   const filter = { ...filterMap[filterId] };
@@ -223,7 +224,17 @@ async function renderJobBoardList(filterId) {
   if (state.jobDateFilter && filterId === 'invoiced') {
     filter.invoicedAfter = new Date(state.jobDateFilter).toISOString();
   }
-  const jobs = await listJobs(filter);
+   const mapStatuses = [
+    JOB_STATUSES.OPEN,
+    JOB_STATUSES.PAUSED,
+    JOB_STATUSES.ON_THE_WAY,
+    JOB_STATUSES.ON_SITE_DIAGNOSTICS,
+    JOB_STATUSES.ON_SITE_REPAIR,
+  ];
+  const [jobs, mapJobs] = await Promise.all([
+    listJobs(filter),
+    listJobs({ statuses: mapStatuses }),
+  ]);
   const activeEvents = await listActiveJobEvents(jobs.map((job) => job.id));
 
   const sortedJobs = jobs.slice().sort((a, b) => {
@@ -247,17 +258,23 @@ async function renderJobBoardList(filterId) {
     const descriptionText = job.description?.trim() || 'No description';
     const ageStamp = formatAgeDaysHours(job.created_at);
     btn.innerHTML = `
-      <div>
-        <div class="job-pill-main">
+       <div class="job-pill-row job-pill-top">
         <div class="job-pill-title">
-          <strong>${job.customers?.name || 'Customer'}</strong>
+           <strong class="job-pill-customer">${escapeHtml(job.customers?.name || 'Customer')}</strong>
+          <span class="job-pill-sep">-</span>
+          <span class="job-pill-field">${escapeHtml(job.fields?.name || 'Field')}</span>
+        </div>
+        <div class="job-pill-duration">${ageStamp}</div>
+        <div class="job-pill-status">
           <span class="badge status-pill" data-status="${job.status}">${statusLabel(job.status)}</span>
         </div>
-        <div class="muted">${job.fields?.name || 'Field'} · ${job.job_types?.name || ''}</div>
+        
       </div>
-      <div class="job-pill-right">
+       <div class="job-pill-row job-pill-sub">
+        <span class="job-pill-type">${escapeHtml(job.job_types?.name || 'Job')}</span>
+        <span class="job-pill-sep">-</span>
         <span class="job-pill-description" title="${escapeHtml(descriptionText)}">${escapeHtml(descriptionText)}</span>
-        <span class="badge time-pill">${ageStamp}</span>
+        
       </div>
     `;
     btn.addEventListener('click', () => openJobDetailModal(job, filterId));
@@ -272,6 +289,155 @@ async function renderJobBoardList(filterId) {
   listWrapper.appendChild(listPanel);
   viewContainer.innerHTML = '';
   viewContainer.appendChild(listWrapper);
+   await renderJobMap(mapPanel, mapJobs, filterId);
+}
+
+const mapState = {
+  loadPromise: null,
+};
+
+function getGoogleMapsApiKey() {
+  const { googleMapsApiKey } = getConfig();
+  return googleMapsApiKey || window.GOOGLE_MAPS_API_KEY || localStorage.getItem('GOOGLE_MAPS_API_KEY') || '';
+}
+
+function loadGoogleMapsApi(apiKey) {
+  if (window.google?.maps) return Promise.resolve();
+  if (!apiKey) return Promise.reject(new Error('Missing Google Maps API key.'));
+  if (mapState.loadPromise) return mapState.loadPromise;
+  mapState.loadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Unable to load Google Maps.'));
+    document.head.appendChild(script);
+  });
+  return mapState.loadPromise;
+}
+
+function mapStatusColor(status = '') {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('paused')) return '#f97316';
+  if (normalized.includes('on_the_way') || normalized.includes('on_site') || normalized.includes('progress')) return '#3b82f6';
+  if (normalized.includes('open')) return '#22c55e';
+  return '#94a3b8';
+}
+
+function getJobCoords(job) {
+  const lat = Number.parseFloat(job.fields?.lat);
+  const lon = Number.parseFloat(job.fields?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lng: lon };
+}
+
+function buildMapUrl(center, zoom = 12) {
+  if (!center) return 'https://www.google.com/maps';
+  return `https://www.google.com/maps/@${center.lat},${center.lng},${zoom}z?maptype=satellite`;
+}
+
+async function renderJobMap(mapPanel, jobs, filterId) {
+  const mapCanvas = mapPanel.querySelector('.map-canvas');
+  const mapOverlay = mapPanel.querySelector('.map-overlay');
+  if (!mapCanvas || !mapOverlay) return;
+
+  const coordsJobs = jobs
+    .filter((job) => ![JOB_STATUSES.FINISHED, JOB_STATUSES.INVOICED, JOB_STATUSES.CANCELED].includes(job.status))
+    .map((job) => ({ job, coords: getJobCoords(job) }))
+    .filter(({ coords }) => coords);
+
+  const fallbackCenter = coordsJobs[0]?.coords || { lat: 39.8283, lng: -98.5795 };
+  const mapUrl = buildMapUrl(fallbackCenter);
+  const openMapTab = () => {
+    window.open(mapUrl, '_blank', 'noopener');
+  };
+
+  if (!coordsJobs.length) {
+    mapOverlay.textContent = 'No active jobs with field coordinates to display.';
+    mapPanel.addEventListener('click', openMapTab);
+    return;
+  }
+
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) {
+    mapOverlay.textContent = 'Map preview requires a Google Maps API key.';
+    mapPanel.addEventListener('click', openMapTab);
+    return;
+  }
+
+  try {
+    await loadGoogleMapsApi(apiKey);
+  } catch (error) {
+    mapOverlay.textContent = 'Unable to load Google Maps preview.';
+    mapPanel.addEventListener('click', openMapTab);
+    return;
+  }
+
+  mapOverlay.hidden = true;
+
+  const map = new window.google.maps.Map(mapCanvas, {
+    center: fallbackCenter,
+    zoom: 9,
+    mapTypeId: 'satellite',
+    disableDefaultUI: true,
+    clickableIcons: false,
+  });
+
+  const bounds = new window.google.maps.LatLngBounds();
+  coordsJobs.forEach(({ coords }) => bounds.extend(coords));
+  if (coordsJobs.length > 1) {
+    map.fitBounds(bounds);
+  } else {
+    map.setZoom(12);
+  }
+
+  const infoWindow = new window.google.maps.InfoWindow();
+
+  coordsJobs.forEach(({ job, coords }) => {
+    const marker = new window.google.maps.Marker({
+      position: coords,
+      map,
+      title: job.customers?.name || 'Job',
+      icon: {
+        path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z',
+        fillColor: mapStatusColor(job.status),
+        fillOpacity: 0.95,
+        strokeColor: '#0f172a',
+        strokeWeight: 1,
+        scale: 1.3,
+        anchor: new window.google.maps.Point(12, 22),
+      },
+    });
+
+    marker.addListener('click', () => {
+      const content = document.createElement('div');
+      content.className = 'map-info';
+      content.innerHTML = `
+        <div class="map-info-title">${escapeHtml(job.customers?.name || 'Customer')}</div>
+        <div class="map-info-sub">${escapeHtml(job.fields?.name || 'Field')}</div>
+        <div class="map-info-sub">${escapeHtml(job.job_types?.name || 'Job Type')}</div>
+      `;
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'map-open-job';
+      openBtn.textContent = 'Open Job';
+      openBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        infoWindow.close();
+        openJobDetailModal(job, filterId);
+      });
+      content.appendChild(openBtn);
+      infoWindow.setContent(content);
+      infoWindow.open(map, marker);
+    });
+  });
+
+  map.addListener('click', () => {
+    const center = map.getCenter();
+    const url = buildMapUrl({ lat: center.lat(), lng: center.lng() }, map.getZoom());
+    window.open(url, '_blank', 'noopener');
+  });
 }
 
 async function openJobDetailModal(job, filterId) {
@@ -1295,6 +1461,15 @@ function jobStatusKey(job){
   if (s.includes('finish') || s.includes('invoic') || s.includes('close')) return 'finished';
   return 'open';
 }
+function quickViewStatusKey(job) {
+  const s = (job.status || job.job_status || job.state || '').toLowerCase();
+  if (s.includes('invoic') || s.includes('cancel') || s.includes('close')) return 'closed';
+  if (s.includes('finish')) return 'finished';
+  if (s.includes('paused')) return 'paused';
+  if (s.includes('progress') || s.includes('on_site') || s.includes('on the way') || s.includes('on_the_way')) return 'in_progress';
+  return 'open';
+}
+
 
 async function renderCustomersPremium() {
   viewTitle.textContent = 'Customers';
@@ -2580,12 +2755,13 @@ async function updateQuickViewCounts() {
 
   try {
     const jobs = await fetchAllJobsSafe();
-    const counts = { open:0, paused:0, in_progress:0, finished:0 };
+   const counts = { open:0, paused:0, in_progress:0, finished:0, closed:0 };
     for (const j of jobs){
-      const k = jobStatusKey(j);
+      const k = quickViewStatusKey(j);
       if (k==='paused') counts.paused++;
       else if (k==='in_progress') counts.in_progress++;
       else if (k==='finished') counts.finished++;
+      else if (k==='closed', counts.closed);
       else counts.open++;
     }
     const set = (key,val)=> document.querySelectorAll(`[data-count="${key}"]`).forEach(el=> el.textContent=String(val));

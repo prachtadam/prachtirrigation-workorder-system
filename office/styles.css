@@ -404,42 +404,72 @@ strong{ font-weight: 900; letter-spacing: .2px; }
   box-shadow: var(--shadow-xs);
 }
 .list .pill.job-pill{
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-}
-
-.job-pill-main{
-  display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
+  align-items: stretch;
+  gap: 6px;
 }
 
+.job-pill-row{
+  align-items: center;
+  gap: 12px;
+min-width: 0;
+}
+
+.job-pill-top{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px auto;
+}
 .job-pill-title{
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
   flex-wrap: wrap;
 }
 
-.job-pill-right{
+.job-pill-field{
+  font-style: italic;
+  font-size: calc(1em - 2px);
+  color: var(--muted);
+}
+
+.job-pill-sep{
+  color: var(--muted);
+}
+
+.job-pill-duration{
+  text-align: center;
+  font-weight: 700;
+  color: rgba(232,238,247,.85);
+}
+
+.job-pill-status{
   display: flex;
+  justify-content: flex-end;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+ }
+
+.job-pill-sub{
+  display: flex;
   flex-wrap: wrap;
-  margin-left: auto;
+  align-items: baseline;
+  font-size: 0.9rem;
+  color: var(--muted);
+  gap: 6px;
+}
+.job-pill-sub .job-pill-type{
+  color: rgba(232,238,247,.85);
+  font-weight: 600;
 }
 
 .job-pill-description{
-  max-width: clamp(220px, 30vw, 420px);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
-  font-weight: 650;
+ color: rgba(232,238,247,.8);
+  font-weight: 500;
 }
 
 .list .pill:hover{
@@ -648,22 +678,108 @@ button.danger:focus-visible{
 }
 
 /* -----------------------------
-   13) MAP PLACEHOLDER (JS + index.html)
+   13) MAP PREVIEW (Job Board)
 ------------------------------ */
-.map-placeholder{
-  height: 240px;
+.map-preview{
   border-radius: var(--r-18);
-  border: 1px dashed rgba(255,255,255,.16);
+  border: 1px solid var(--border);
   background:
-    radial-gradient(900px 500px at 20% 20%, rgba(96,165,250,.16), transparent 60%),
-    radial-gradient(800px 500px at 80% 20%, rgba(167,139,250,.14), transparent 60%),
+    radial-gradient(900px 500px at 20% 20%, rgba(96,165,250,.12), transparent 60%),
+    radial-gradient(800px 500px at 80% 20%, rgba(167,139,250,.12), transparent 60%),
     rgba(255,255,255,.03);
-  display:grid;
-  place-items:center;
-  color: var(--muted);
+ display: grid;
+  gap: 12px;
+  padding: 14px;
   box-shadow: var(--shadow-xs);
 }
+.map-preview .map-head{
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
 
+.map-preview .map-title{
+  font-weight: 700;
+}
+
+.map-preview .map-legend{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.map-preview .legend-dot{
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.map-preview .legend-open{ background: #22c55e; }
+.map-preview .legend-paused{ background: #f97316; }
+.map-preview .legend-progress{ background: #3b82f6; }
+
+.map-frame{
+  position: relative;
+  height: 240px;
+  border-radius: var(--r-16);
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(15,23,42,.55);
+}
+
+.map-canvas{
+  width: 100%;
+  height: 100%;
+}
+
+.map-overlay{
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 12px;
+  background: rgba(15,23,42,.72);
+  color: rgba(232,238,247,.7);
+  font-size: 13px;
+  backdrop-filter: blur(4px);
+}
+
+.map-info{
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.map-info-title{
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.map-info-sub{
+  font-size: 13px;
+  color: #475569;
+}
+
+.map-open-job{
+  margin-top: 6px;
+  border: none;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: #22c55e;
+  color: #0f172a;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.map-open-job:hover{
+  background: #4ade80;
+}
 /* -----------------------------
    14) TOAST
 ------------------------------ */
@@ -948,6 +1064,7 @@ button.action.wide{
 .dot.paused{ background: #fb7185; }
 .dot.progress{ background: #f59e0b; }
 .dot.closed{ background: #94a3b8; }
+.dot.neutral{ background: #94a3b8; }
 .dot.warning{ background: #fbbf24; }
 .dot.danger{ background: #ef4444; }
 
