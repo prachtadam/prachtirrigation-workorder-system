@@ -403,6 +403,44 @@ strong{ font-weight: 900; letter-spacing: .2px; }
   border: 1px solid var(--border);
   box-shadow: var(--shadow-xs);
 }
+.list .pill.job-pill{
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.job-pill-main{
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.job-pill-title{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.job-pill-right{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.job-pill-description{
+  max-width: clamp(220px, 30vw, 420px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 650;
+}
 
 .list .pill:hover{
   border-color: var(--border-2);

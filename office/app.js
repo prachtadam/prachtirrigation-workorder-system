@@ -48,6 +48,7 @@ import {
   deleteReceipt,
   markJobInvoiced,
   cancelJob,
+  updateJob,
   addAttachment,
   getSupabaseClient,
 } from '../shared/db.js';
@@ -90,7 +91,15 @@ function formatDuration(seconds = 0) {
   if (hours) return `${hours}h ${remainder}m`;
   return `${remainder}m`;
 }
-
+function formatAgeDaysHours(dateValue) {
+  const createdAt = new Date(dateValue);
+  if (!dateValue || Number.isNaN(createdAt.getTime())) return '--:--';
+  const diffMs = Math.max(0, Date.now() - createdAt.getTime());
+  const totalHours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return `${days}:${String(hours).padStart(2, '0')}`;
+}
 function statusLabel(status) {
   return status.replace(/_/g, ' ').toUpperCase();
 }
@@ -189,9 +198,7 @@ async function renderJobBoardList(filterId) {
 
   const listPanel = document.createElement('div');
   listPanel.className = 'card list';
-  const detailPanel = document.createElement('div');
-  detailPanel.className = 'card section-stack';
-  detailPanel.innerHTML = '<p>Select a job to view details.</p>';
+ 
 
   const createButton = document.createElement('button');
   createButton.className = 'pill';
@@ -236,25 +243,66 @@ async function renderJobBoardList(filterId) {
 
   sortedJobs.forEach((job) => {
     const btn = document.createElement('button');
-    btn.className = 'pill';
+    btn.className = 'pill job-pill';
+    const descriptionText = job.description?.trim() || 'No description';
+    const ageStamp = formatAgeDaysHours(job.created_at);
     btn.innerHTML = `
       <div>
-        <strong>${job.customers?.name || 'Customer'}</strong>
+        <div class="job-pill-main">
+        <div class="job-pill-title">
+          <strong>${job.customers?.name || 'Customer'}</strong>
+          <span class="badge status-pill" data-status="${job.status}">${statusLabel(job.status)}</span>
+        </div>
         <div class="muted">${job.fields?.name || 'Field'} · ${job.job_types?.name || ''}</div>
       </div>
-      <span class="badge">${statusLabel(job.status)}</span>
+      <div class="job-pill-right">
+        <span class="job-pill-description" title="${escapeHtml(descriptionText)}">${escapeHtml(descriptionText)}</span>
+        <span class="badge time-pill">${ageStamp}</span>
+      </div>
     `;
-    btn.addEventListener('click', async () => {
-      const durations = await getJobStatusDurations(job.id);
-      detailPanel.innerHTML = `
-        <div>
-          <h3>${job.customers?.name || ''} - ${job.fields?.name || ''}</h3>
-          <p><strong>Status:</strong> ${statusLabel(job.status)}</p>
-          <p><strong>Tech:</strong> ${job.users?.full_name || 'Unassigned'}</p>
+    btn.addEventListener('click', () => openJobDetailModal(job, filterId));
+    listPanel.appendChild(btn);
+  });
+
+  if (!sortedJobs.length) {
+    listPanel.innerHTML += '<p>No jobs found for this filter.</p>';
+  }
+
+  listWrapper.appendChild(mapPanel);
+  listWrapper.appendChild(listPanel);
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(listWrapper);
+}
+
+async function openJobDetailModal(job, filterId) {
+  const durations = await getJobStatusDurations(job.id);
+  const techAssigned = job.status === JOB_STATUSES.OPEN ? '' : (job.users?.full_name || '');
+  const truckAssigned = job.status === JOB_STATUSES.OPEN ? '' : (job.trucks?.truck_identifier || job.trucks?.name || '');
+  const description = job.description || '';
+  const officeNotes = job.office_notes || '';
+  const reportsMarkup = job.attachments?.length
+    ? job.attachments
+      .map((att) => `<a href="${att.file_url}" target="_blank">${escapeHtml(att.attachment_type)}</a>`)
+      .join('<br/>')
+    : '<p>No reports yet.</p>';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true" aria-label="Job details">
+      <div class="modal-head">
+        <div class="modal-title">${escapeHtml(job.customers?.name || 'Job Details')}</div>
+        <button class="pill tiny" type="button" data-close>Close</button>
+      </div>
+      <div class="modal-body section-stack">
+        <div class="section-stack">
+          <h3>${escapeHtml(job.customers?.name || '')} - ${escapeHtml(job.fields?.name || '')}</h3>
+          <p><strong>Status:</strong> <span class="badge status-pill" data-status="${job.status}">${statusLabel(job.status)}</span></p>
+          <p><strong>Tech Assigned:</strong> ${escapeHtml(techAssigned)}</p>
+          <p><strong>Truck ID:</strong> ${escapeHtml(truckAssigned)}</p>
           <p><strong>Age:</strong> ${formatDuration((Date.now() - new Date(job.created_at)) / 1000)}</p>
-          <p><strong>Job Type:</strong> ${job.job_types?.name || ''}</p>
-          <p><strong>Description:</strong> ${job.description || ''}</p>
-          <p><strong>Office Notes:</strong> ${job.office_notes || 'None'}</p>
+          <p><strong>Job Type:</strong> ${escapeHtml(job.job_types?.name || '')}</p>
+          <p><strong>Description:</strong> ${escapeHtml(description)}</p>
         </div>
         <div>
           <h4>Time in Status</h4>
@@ -268,57 +316,71 @@ async function renderJobBoardList(filterId) {
         </div>
         <div>
           <h4>Reports</h4>
-          ${job.attachments?.length ? job.attachments.map((att) => `<a href="${att.file_url}" target="_blank">${att.attachment_type}</a>`).join('<br/>') : '<p>No reports yet.</p>'}
+          ${reportsMarkup}
         </div>
-        <div class="form-grid">
-          ${job.status !== JOB_STATUSES.INVOICED && job.status !== JOB_STATUSES.CANCELED ? '<button class="action" data-action="invoice">Mark Invoiced</button>' : ''}
-          ${job.status !== JOB_STATUSES.CANCELED ? '<button class="action danger" data-action="cancel">Cancel Job</button>' : ''}
+       <div class="section-stack">
+          <label for="job-office-notes">Office Notes</label>
+          <textarea id="job-office-notes" placeholder="Add office notes...">${escapeHtml(officeNotes)}</textarea>
         </div>
-      `;
+      </div>
+      <div class="modal-foot">
+        <button class="pill secondary" type="button" data-cancel>Close</button>
+        <button class="action" type="button" data-save-notes>Save Notes</button>
+        ${job.status !== JOB_STATUSES.INVOICED && job.status !== JOB_STATUSES.CANCELED ? '<button class="action" data-action="invoice">Mark Invoiced</button>' : ''}
+        ${job.status !== JOB_STATUSES.CANCELED ? '<button class="action danger" data-action="cancel">Cancel Job</button>' : ''}
+      </div>
+    </div>
+    <button class="modal-scrim" aria-label="Close"></button>
+  `;
+  document.body.appendChild(modal);
 
-      const invoiceBtn = detailPanel.querySelector('[data-action="invoice"]');
-      if (invoiceBtn) {
-        invoiceBtn.addEventListener('click', async () => {
-          try {
-            await markJobInvoiced(job.id);
-            showToast('Job marked invoiced.');
-            await renderJobBoardList(filterId);
-          } catch (error) {
-            showToast(error.message);
-          }
-        });
-      }
-      const cancelBtn = detailPanel.querySelector('[data-action="cancel"]');
-      if (cancelBtn) {
-        cancelBtn.addEventListener('click', async () => {
-          const reason = prompt('Enter cancel reason');
-          if (!reason) return;
-          try {
-            await cancelJob(job.id, reason);
-            showToast('Job canceled.');
-            await renderJobBoardList(filterId);
-          } catch (error) {
-            showToast(error.message);
-          }
-        });
-      }
-    });
-    listPanel.appendChild(btn);
+      const close = () => { modal.remove(); };
+  modal.querySelector('[data-close]').addEventListener('click', close);
+  modal.querySelector('[data-cancel]').addEventListener('click', close);
+  modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+  const notesButton = modal.querySelector('[data-save-notes]');
+  const notesInput = modal.querySelector('#job-office-notes');
+  notesButton.addEventListener('click', async () => {
+    try {
+      await updateJob(job.id, { office_notes: notesInput.value.trim() });
+      showToast('Office notes saved.');
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 
-  if (!sortedJobs.length) {
-    listPanel.innerHTML += '<p>No jobs found for this filter.</p>';
+  const invoiceBtn = modal.querySelector('[data-action="invoice"]');
+  if (invoiceBtn) {
+    invoiceBtn.addEventListener('click', async () => {
+      try {
+        await markJobInvoiced(job.id);
+        showToast('Job marked invoiced.');
+        close();
+        await renderJobBoardList(filterId);
+      } catch (error) {
+        showToast(error.message);
+      }
+     });
+  }
+  const cancelBtn = modal.querySelector('[data-action="cancel"]');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', async () => {
+      const reason = prompt('Enter cancel reason');
+      if (!reason) return;
+      try {
+        await cancelJob(job.id, reason);
+        showToast('Job canceled.');
+        close();
+        await renderJobBoardList(filterId);
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+    
   }
 
-  const grid = document.createElement('div');
-  grid.className = 'grid-two';
-  grid.appendChild(listPanel);
-  grid.appendChild(detailPanel);
-
-  listWrapper.appendChild(mapPanel);
-  listWrapper.appendChild(grid);
-  viewContainer.innerHTML = '';
-  viewContainer.appendChild(listWrapper);
+  
 }
 function buildDatalistOptions(listNode, items = [], key = 'name') {
   listNode.innerHTML = items
