@@ -790,6 +790,167 @@ async function renderListView({
   viewContainer.innerHTML = '';
   viewContainer.appendChild(layout);
 }
+async function renderUsersView() {
+  viewTitle.textContent = 'Users';
+  viewSubtitle.textContent = 'Manage tech and helper users.';
+  viewActions.innerHTML = '';
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'action';
+  addBtn.type = 'button';
+  addBtn.textContent = 'Add User';
+  viewActions.appendChild(addBtn);
+
+  const users = await listUsers();
+
+  const listCard = document.createElement('div');
+  listCard.className = 'card list';
+
+  const roleOptions = [
+    { value: 'admin', label: 'Admin' },
+    { value: 'helper', label: 'Helper' },
+    { value: 'tech', label: 'Tech' },
+  ];
+
+  const openUserModal = ({ user } = {}) => {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(user ? 'Edit User' : 'Add User')}">
+        <div class="modal-head">
+          <div class="modal-title">${user ? 'Edit User' : 'Add User'}</div>
+          <div class="modal-actions">
+            ${user ? '<button class="pill tiny danger" type="button" data-delete>Delete</button>' : ''}
+            <button class="pill tiny" type="button" data-close>Close</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <form class="form-grid" id="user-form"></form>
+        </div>
+        <div class="modal-foot">
+          <button class="secondary" type="button" data-cancel>Cancel</button>
+          <button class="action" type="button" data-save>Save</button>
+        </div>
+      </div>
+      <button class="modal-scrim" aria-label="Close"></button>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => {
+      modal.remove();
+    };
+
+    modal.querySelector('[data-close]').addEventListener('click', close);
+    modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+    const form = modal.querySelector('#user-form');
+    const fields = [
+      { key: 'full_name', label: 'Name' },
+      { key: 'role', label: 'Role', type: 'select' },
+      { key: 'email', label: 'Email' },
+      { key: 'phone', label: 'Phone' },
+    ];
+
+    const inputs = {};
+    fields.forEach((field) => {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      let input;
+      if (field.type === 'select') {
+        input = document.createElement('select');
+        roleOptions.forEach((option) => {
+          const opt = document.createElement('option');
+          opt.value = option.value;
+          opt.textContent = option.label;
+          input.appendChild(opt);
+        });
+      } else {
+        input = document.createElement('input');
+      }
+      input.name = field.key;
+      input.value = user?.[field.key] || '';
+      inputs[field.key] = input;
+      wrap.append(label, input);
+      form.appendChild(wrap);
+    });
+
+    modal.querySelector('[data-cancel]').addEventListener('click', () => {
+      form.reset();
+      close();
+    });
+
+    modal.querySelector('[data-save]').addEventListener('click', async () => {
+      const payload = {};
+      fields.forEach((field) => {
+        payload[field.key] = inputs[field.key].value.trim();
+      });
+      if (!payload.full_name) {
+        showToast('Name is required.');
+        return;
+      }
+      try {
+        if (user) {
+          const userId = getId(user);
+          if (!userId) throw new Error('Missing Supabase ID for update.');
+          await updateUser(userId, payload);
+          showToast('User updated.');
+        } else {
+          await createUser(payload);
+          showToast('User added.');
+        }
+        await refreshBoot();
+        close();
+        await renderUsersView();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+
+    const deleteBtn = modal.querySelector('[data-delete]');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (!user) return;
+        if (!confirm('Delete this user? This cannot be undone.')) return;
+        try {
+          const userId = getId(user);
+          if (!userId) throw new Error('Missing Supabase ID for delete.');
+          await deleteUser(userId);
+          showToast('User deleted.');
+          await refreshBoot();
+          close();
+          await renderUsersView();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    }
+  };
+
+  addBtn.addEventListener('click', () => openUserModal());
+
+  users.forEach((user) => {
+    const pill = document.createElement('button');
+    pill.className = 'pill';
+    pill.type = 'button';
+    const roleLabel = roleOptions.find((option) => option.value === user.role)?.label || user.role || '';
+    pill.innerHTML = `
+      <div>
+        <strong>${escapeHtml(user.full_name || 'User')}</strong>
+        <div class="muted">${[roleLabel, user.email, user.phone].filter(Boolean).join(' • ')}</div>
+      </div>
+    `;
+    pill.addEventListener('click', () => openUserModal({ user }));
+    listCard.appendChild(pill);
+  });
+
+  if (!users.length) {
+    listCard.innerHTML += '<p>No users yet.</p>';
+  }
+
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(listCard);
+}
 
 async function renderRequests() {
   viewTitle.textContent = 'Requests';
@@ -2425,9 +2586,11 @@ async function renderTruckListView(truck, listType) {
   const listName = isInventory ? 'Truck Inventory' : 'Tool List';
   const items = isInventory ? await listTruckInventory(truckId) : await listTruckTools(truckId);
 
+  const toolNameMap = new Map(state.boot?.tools?.map((tool) => [tool.name, tool]) || []);
   const draft = items.map((item) => ({
     id: item.id,
     product_id: item.product_id,
+    tool_id: item.tool_id || item.tools?.id || toolNameMap.get(item.tool_name)?.id,
     tool_name: item.tool_name || item.tools?.name,
     name: item.products?.name || item.tools?.name || item.tool_name || item.product_id,
     qty: Number(item.qty ?? 0),
@@ -2556,9 +2719,18 @@ async function renderTruckListView(truck, listType) {
     }
 
     const label = document.createElement('label');
-    label.textContent = 'Tool Name';
-    primaryInput = document.createElement('input');
-    primaryInput.placeholder = 'Tool name';
+  label.textContent = 'Tool';
+    primaryInput = document.createElement('select');
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = 'Select a tool';
+    primaryInput.appendChild(placeholderOption);
+    state.boot.tools.forEach((tool) => {
+      const option = document.createElement('option');
+      option.value = tool.id;
+      option.textContent = tool.name;
+      primaryInput.appendChild(option);
+    });
     const qtyLabel = document.createElement('label');
     qtyLabel.textContent = 'Quantity';
     qtyInput = document.createElement('input');
@@ -2573,11 +2745,13 @@ async function renderTruckListView(truck, listType) {
     const { close } = openModalSimple({ title: 'Add Tool', bodyEl: body });
     cancel.addEventListener('click', () => close());
     save.addEventListener('click', () => {
-      const name = primaryInput.value.trim();
+       const toolId = primaryInput.value;
+      const tool = toolIdMap.get(toolId);
       const qty = Number(qtyInput.value || 0);
-      if (!name) return showToast('Tool name is required.');
+     if (!toolId) return showToast('Tool selection is required.');
+      if (!tool) return showToast('Select a valid tool.');
       if (!qty) return showToast('Quantity is required.');
-      const existing = draft.find((item) => item.tool_name === name);
+       draft.push({ tool_id: tool.id, tool_name: tool.name, name: tool.name, qty });
       if (existing) {
         existing.qty += qty;
       } else {
@@ -2602,13 +2776,32 @@ async function renderTruckListView(truck, listType) {
           ),
         ]);
       } else {
+          for (const item of draft) {
+          if (!item.tool_id && item.tool_name) {
+            item.tool_id = toolNameMap.get(item.tool_name)?.id;
+          }
+          if (!item.tool_id) {
+            showToast('Each tool must be selected from the tool list.');
+            return;
+          }
+        }
         await Promise.all([
           ...Array.from(deletedIds).map((id) => deleteTruckTool(id)),
           ...draft.map((item) => {
             if (item.id) {
-              return updateTruckTool(item.id, { tool_name: item.tool_name, qty: item.qty, truck_id: truckId });
+              return updateTruckTool(item.id, {
+                tool_id: item.tool_id,
+                tool_name: item.tool_name,
+                qty: item.qty,
+                truck_id: truckId,
+              });
             }
-            return addTruckTool({ truck_id: truckId, tool_name: item.tool_name, qty: item.qty });
+           return addTruckTool({
+              truck_id: truckId,
+              tool_id: item.tool_id,
+              tool_name: item.tool_name,
+              qty: item.qty,
+            });
           }),
         ]);
       }
@@ -2658,20 +2851,7 @@ const viewHandlers = {
     ],
   }),
   trucks: renderTrucksPremium,
-  users: () => renderListView({
-    title: 'Users',
-    subtitle: 'Manage tech and helper users.',
-    listLoader: listUsers,
-    createHandler: createUser,
-    updateHandler: updateUser,
-    deleteHandler: deleteUser,
-    fields: [
-      { key: 'full_name', label: 'Full Name' },
-      { key: 'role', label: 'Role' },
-      { key: 'email', label: 'Email' },
-      { key: 'phone', label: 'Phone' },
-    ],
-  }),
+  users: renderUsersView,
   'job-types': () => renderListView({
     title: 'Job Types',
     subtitle: 'Define job categories.',
