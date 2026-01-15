@@ -182,7 +182,7 @@ async function renderJobBoardList(filterId) {
     <div class="map-head">
       <div>
         <div class="map-title">Map Preview</div>
-        <div class="muted small">Satellite view • click map to open Google Maps</div>
+        <div class="muted small">Satellite view for job locations</div>
       </div>
       <div class="map-legend">
         <span><span class="legend-dot legend-open"></span>Open</span>
@@ -293,29 +293,11 @@ async function renderJobBoardList(filterId) {
 }
 
 const mapState = {
-  loadPromise: null,
+ map: null,
+ markersLayer: null,
 };
 
-function getGoogleMapsApiKey() {
-  const { googleMapsApiKey } = getConfig();
-  return googleMapsApiKey || window.GOOGLE_MAPS_API_KEY || localStorage.getItem('GOOGLE_MAPS_API_KEY') || '';
-}
 
-function loadGoogleMapsApi(apiKey) {
-  if (window.google?.maps) return Promise.resolve();
-  if (!apiKey) return Promise.reject(new Error('Missing Google Maps API key.'));
-  if (mapState.loadPromise) return mapState.loadPromise;
-  mapState.loadPromise = new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Unable to load Google Maps.'));
-    document.head.appendChild(script);
-  });
-  return mapState.loadPromise;
-}
 
 function mapStatusColor(status = '') {
   const normalized = status.toLowerCase();
@@ -332,10 +314,24 @@ function getJobCoords(job) {
   return { lat, lng: lon };
 }
 
-function buildMapUrl(center, zoom = 12) {
-  if (!center) return 'https://www.google.com/maps';
-  return `https://www.google.com/maps/@${center.lat},${center.lng},${zoom}z?maptype=satellite`;
+function buildLeafletMarkerIcon(color) {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44" fill="none">
+      <path d="M17 1C9.28 1 3 7.28 3 15c0 9.5 14 27.5 14 27.5S31 24.5 31 15C31 7.28 24.72 1 17 1Z" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
+      <circle cx="17" cy="15" r="6.4" fill="rgba(15,23,42,0.18)"/>
+      <path d="M17 10.1l1.2.4 1.1-.8 1.5 1.5-.8 1.1.4 1.2 1.2.4v2.1l-1.2.4-.4 1.2.8 1.1-1.5 1.5-1.1-.8-1.2.4-.4 1.2h-2.1l-.4-1.2-1.2-.4-1.1.8-1.5-1.5.8-1.1-.4-1.2-1.2-.4v-2.1l1.2-.4.4-1.2-.8-1.1 1.5-1.5 1.1.8 1.2-.4.4-1.2h2.1Z" fill="#0f172a"/>
+      <circle cx="17" cy="15" r="2.6" fill="#e2e8f0"/>
+    </svg>
+  `;
+  return window.L.divIcon({
+    className: 'job-pin',
+    html: svg,
+    iconSize: [34, 44],
+    iconAnchor: [17, 44],
+    popupAnchor: [0, -40],
+  })
 }
+
 
 async function renderJobMap(mapPanel, jobs, filterId) {
   const mapCanvas = mapPanel.querySelector('.map-canvas');
@@ -347,98 +343,72 @@ async function renderJobMap(mapPanel, jobs, filterId) {
     .map((job) => ({ job, coords: getJobCoords(job) }))
     .filter(({ coords }) => coords);
 
-  const fallbackCenter = coordsJobs[0]?.coords || { lat: 39.8283, lng: -98.5795 };
-  const mapUrl = buildMapUrl(fallbackCenter);
-  const openMapTab = () => {
-    window.open(mapUrl, '_blank', 'noopener');
-  };
-
+  
   if (!coordsJobs.length) {
     mapOverlay.textContent = 'No active jobs with field coordinates to display.';
-    mapPanel.addEventListener('click', openMapTab);
     return;
   }
-
-  const apiKey = getGoogleMapsApiKey();
-  if (!apiKey) {
-    mapOverlay.textContent = 'Map preview requires a Google Maps API key.';
-    mapPanel.addEventListener('click', openMapTab);
-    return;
-  }
-
-  try {
-    await loadGoogleMapsApi(apiKey);
-  } catch (error) {
-    mapOverlay.textContent = 'Unable to load Google Maps preview.';
-    mapPanel.addEventListener('click', openMapTab);
+if (!window.L) {
+    mapOverlay.textContent = 'Map preview required Leaflet to load.';
+}
     return;
   }
 
   mapOverlay.hidden = true;
 
-  const map = new window.google.maps.Map(mapCanvas, {
-    center: fallbackCenter,
-    zoom: 9,
-    mapTypeId: 'satellite',
-    disableDefaultUI: true,
-    clickableIcons: false,
-  });
-
-  const bounds = new window.google.maps.LatLngBounds();
-  coordsJobs.forEach(({ coords }) => bounds.extend(coords));
-  if (coordsJobs.length > 1) {
-    map.fitBounds(bounds);
-  } else {
-    map.setZoom(12);
+  if (mapState.map) {
+    mapState.map.remove();
+    mapState.map = null;
   }
+  const map = window.L.map(mapCanvas, {
+      zoomControl: true,
+      attributionControl: true,
+  });
+      mapState.map = map;
 
-  const infoWindow = new window.google.maps.InfoWindow();
+      window.L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery?MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution: 'Tiles @ Esri',
+          maxZoom: 19,
+        },
+      ).addTo(map);
+
+      const bounds = window.L.latLngBounds(coords.Jobs.map(({ coords }) => coords));
+      map.fitBounds(bounds.pad(0.2));
+      
+
+ const markersLayer = window.L.layerGroup().addTo(map);
+ mapState.markersLayer = markersLayer;
 
   coordsJobs.forEach(({ job, coords }) => {
-    const marker = new window.google.maps.Marker({
-      position: coords,
-      map,
+   const marker = window.L.marker(coords, {
       title: job.customers?.name || 'Job',
-      icon: {
-        path: 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z',
-        fillColor: mapStatusColor(job.status),
-        fillOpacity: 0.95,
-        strokeColor: '#0f172a',
-        strokeWeight: 1,
-        scale: 1.3,
-        anchor: new window.google.maps.Point(12, 22),
-      },
+     icon: buildLeafletMarkerIcon(mapStatusColor(job.status)),
     });
 
-    marker.addListener('click', () => {
-      const content = document.createElement('div');
-      content.className = 'map-info';
-      content.innerHTML = `
-        <div class="map-info-title">${escapeHtml(job.customers?.name || 'Customer')}</div>
-        <div class="map-info-sub">${escapeHtml(job.fields?.name || 'Field')}</div>
-        <div class="map-info-sub">${escapeHtml(job.job_types?.name || 'Job Type')}</div>
-      `;
-      const openBtn = document.createElement('button');
-      openBtn.type = 'button';
-      openBtn.className = 'map-open-job';
-      openBtn.textContent = 'Open Job';
-      openBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        infoWindow.close();
-        openJobDetailModal(job, filterId);
-      });
-      content.appendChild(openBtn);
-      infoWindow.setContent(content);
-      infoWindow.open(map, marker);
+    marker.addTo(markersLayer);
+
+    const content = document.createElement('div');
+    content.className = 'map-info';
+    content.innerHTML = `
+      <div class="map-info-title">${escapeHtml(job.customers?.name || 'Customer')}</div>
+      <div class="map-info-sub">${escapeHtml(job.fields?.name || 'Field')}</div>
+      <div class="map-info-sub">${escapeHtml(job.job_types?.name || 'Job Type')}</div>
+    `;
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'map-open-job';
+    openBtn.textContent = 'Open Job';
+    openBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      map.closePopup();
+      openJobDetailModal(job, filterId);
     });
+  content.appendChild(openBtn);
+  marker.bindPopup(content, {closeButton: true, autoPan: true});
   });
 
-  map.addListener('click', () => {
-    const center = map.getCenter();
-    const url = buildMapUrl({ lat: center.lat(), lng: center.lng() }, map.getZoom());
-    window.open(url, '_blank', 'noopener');
-  });
-}
 
 async function openJobDetailModal(job, filterId, options = {}) {
   const durations = await getJobStatusDurations(job.id);

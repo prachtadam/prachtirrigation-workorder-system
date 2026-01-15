@@ -737,6 +737,11 @@ button.danger:focus-visible{
   height: 100%;
 }
 
+.job-pin{
+  background: transparent;
+  border: none;
+}
+
 .map-overlay{
   position: absolute;
   inset: 0;
