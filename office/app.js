@@ -38,6 +38,7 @@ import {
   deleteTruckTool,
   listTruckInventory,
   upsertTruckInventory,
+  updateTruckInventory,
   deleteTruckInventory,
   listAllRequests,
   resolveRequest,
@@ -120,6 +121,17 @@ function exportCsv(items, filePrefix, fields) {
   URL.revokeObjectURL(link.href);
 }
 
+function exportCsvTemplate(filePrefix, fields) {
+  const headers = fields.map((field) => field.key).join(',');
+  const csv = `${headers}\n`;
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${filePrefix || 'template'}-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 async function handleImportCsv(event, fields, createHandler) {
   const file = event.target.files?.[0];
   if (!file) return;
@@ -144,6 +156,76 @@ async function handleImportCsv(event, fields, createHandler) {
   showToast('Import complete. Refreshing list.');
   event.target.value = '';
   await setView(state.currentView);
+}
+
+async function handleInventoryImportCsv(event, truck, inventoryItems) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const truckId = getId(truck);
+  if (!truckId) return;
+  const text = await file.text();
+  const [headerRow, ...rows] = text.split(/\r?\n/).filter(Boolean);
+  if (!headerRow) {
+    showToast('Import file is empty.');
+    return;
+  }
+  const headers = headerRow.split(',').map((header) => header.trim());
+  const productBySku = new Map();
+  const productByName = new Map();
+  (state.boot?.products || []).forEach((product) => {
+    if (product.sku) productBySku.set(product.sku.toLowerCase(), product);
+    if (product.name) productByName.set(product.name.toLowerCase(), product);
+  });
+  const inventoryMap = new Map(inventoryItems.map((item) => [item.product_id, item]));
+
+  for (const row of rows) {
+    const values = row.split(',').map((value) => value.replace(/^\"|\"$/g, '').trim());
+    const payload = {};
+    headers.forEach((header, index) => {
+      payload[header] = values[index];
+    });
+    const sku = payload.sku?.trim();
+    const name = payload.name?.trim();
+    const minRaw = payload.min_qty ?? payload.minimum_qty ?? payload.min;
+    const parsedMin = Number(minRaw);
+    let product = sku ? productBySku.get(sku.toLowerCase()) : null;
+    if (!product && name) product = productByName.get(name.toLowerCase());
+    if (!product) {
+      if (!name) {
+        showToast('Missing part name for an import row.');
+        continue;
+      }
+      const shouldAdd = confirm(`Part "${name}" was not found. Add it to the parts table?`);
+      if (!shouldAdd) continue;
+      try {
+        product = await createProduct({ name, sku });
+        if (state.boot?.products) state.boot.products.push(product);
+        productByName.set(product.name.toLowerCase(), product);
+        if (product.sku) productBySku.set(product.sku.toLowerCase(), product);
+      } catch (error) {
+        showToast(`Unable to add part: ${error.message}`);
+        continue;
+      }
+    }
+    const existing = inventoryMap.get(product.id);
+    const min_qty = Number.isNaN(parsedMin) ? (existing?.min_qty ?? 0) : parsedMin;
+    const qty = existing?.qty ?? 0;
+    try {
+      await upsertTruckInventory({
+        truck_id: truckId,
+        product_id: product.id,
+        qty,
+        min_qty,
+        origin: 'permanent',
+      });
+    } catch (error) {
+      showToast(`Import error: ${error.message}`);
+      break;
+    }
+  }
+  showToast('Import complete. Refreshing list.');
+  event.target.value = '';
+  await renderTruckListView(truck, 'inventory');
 }
 
 async function refreshBoot() {
@@ -2970,7 +3052,7 @@ async function renderTruckListView(truck, listType) {
   const items = isInventory ? await listTruckInventory(truckId) : await listTruckTools(truckId);
 
   const toolNameMap = new Map(state.boot?.tools?.map((tool) => [tool.name, tool]) || []);
-  const draft = items.map((item) => ({
+  const draft = isInventory ? [] : items.map((item) => ({
     id: item.id,
     product_id: item.product_id,
     tool_id: item.tool_id || item.tools?.id || toolNameMap.get(item.tool_name)?.id,
@@ -2994,7 +3076,24 @@ async function renderTruckListView(truck, listType) {
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderTruckFilePremium);
-  viewActions.append(saveBtn, addBtn, backBtn);
+ if (isInventory) {
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'pill';
+    exportBtn.textContent = 'Export Template';
+    const importInput = document.createElement('input');
+    importInput.type = 'file';
+    importInput.accept = '.csv';
+    const importFields = [
+      { key: 'sku', label: 'SKU' },
+      { key: 'name', label: 'Part Name' },
+      { key: 'min_qty', label: 'Minimum Qty' },
+    ];
+    exportBtn.addEventListener('click', () => exportCsvTemplate('truck-inventory-template', importFields));
+    importInput.addEventListener('change', (event) => handleInventoryImportCsv(event, truck, items));
+    viewActions.append(addBtn, exportBtn, importInput, backBtn);
+  } else {
+    viewActions.append(saveBtn, addBtn, backBtn);
+  }
 
   const container = document.createElement('div');
   container.className = 'section-stack';
@@ -3008,6 +3107,115 @@ async function renderTruckListView(truck, listType) {
   const list = document.createElement('div');
   list.className = 'list';
   listCard.appendChild(list);
+
+  const renderInventoryList = () => {
+    list.innerHTML = '';
+    if (!items.length) {
+      list.appendChild(elTag('div', { className: 'muted', text: 'No parts added yet.' }));
+      return;
+    }
+    items.forEach((item) => {
+      const part = item.products || {};
+      const minQty = Number(item.min_qty ?? part.minimum_qty ?? 0);
+      const row = document.createElement('button');
+      row.className = 'pill inventory-row';
+      row.type = 'button';
+      row.innerHTML = `
+        <div class="inventory-main">
+          <div class="inventory-name">${escapeHtml(part.name || 'Part')}</div>
+          <div class="inventory-sku">${escapeHtml(part.sku || 'SKU N/A')}</div>
+        </div>
+        <div class="inventory-meta">
+          <span class="qty-pill">
+            <span class="pill-label">Min</span>
+            <span class="pill-num">${minQty || 0}</span>
+          </span>
+          <span class="qty-pill">
+            <span class="pill-label">On Truck</span>
+            <span class="pill-num">${Number(item.qty ?? 0)}</span>
+          </span>
+        </div>
+      `;
+      row.addEventListener('click', () => openInventoryPartModal(item));
+      list.appendChild(row);
+    });
+  };
+
+  const openInventoryPartModal = (item) => {
+    const part = item.products || {};
+    const body = document.createElement('div');
+    body.className = 'section-stack';
+    const info = document.createElement('div');
+    info.className = 'card';
+    info.innerHTML = `
+      <div class="detail-title">${escapeHtml(part.name || 'Part')}</div>
+      <div class="muted">${escapeHtml(part.sku || 'SKU N/A')}</div>
+      <div>${escapeHtml(part.description || 'No description provided.')}</div>
+      <div class="muted">Shelf: ${escapeHtml(part.shelf || 'Unassigned')}</div>
+      <div class="muted">Current on Truck: ${Number(item.qty ?? 0)}</div>
+    `;
+    const form = document.createElement('div');
+    form.className = 'form-grid';
+    const minWrap = document.createElement('div');
+    const minLabel = document.createElement('label');
+    minLabel.textContent = 'Minimum Qty';
+    const minInput = document.createElement('input');
+    minInput.type = 'number';
+    minInput.min = '0';
+    minInput.value = Number(item.min_qty ?? part.minimum_qty ?? 0);
+    if ((item.origin || 'permanent') === 'tech_added') {
+      minInput.disabled = true;
+    }
+    minWrap.append(minLabel, minInput);
+    form.appendChild(minWrap);
+    const foot = document.createElement('div');
+    foot.className = 'modal-foot';
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'secondary';
+    removeBtn.type = 'button';
+    removeBtn.textContent = 'Remove';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'secondary';
+    cancelBtn.type = 'button';
+    cancelBtn.textContent = 'Cancel';
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'action';
+    saveBtn.type = 'button';
+    saveBtn.textContent = 'Save';
+    if ((item.origin || 'permanent') === 'tech_added') {
+      saveBtn.disabled = true;
+    }
+    foot.append(removeBtn, cancelBtn, saveBtn);
+    body.append(info, form, foot);
+    const { close } = openModalSimple({ title: 'Truck Inventory Part', bodyEl: body });
+    cancelBtn.addEventListener('click', close);
+    removeBtn.addEventListener('click', async () => {
+      if (!confirm('Remove this part from the truck inventory list?')) return;
+      try {
+        await deleteTruckInventory(item.id);
+        showToast('Part removed.');
+        close();
+        await renderTruckListView(truck, 'inventory');
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+    saveBtn.addEventListener('click', async () => {
+      const minQty = Number(minInput.value || 0);
+      if (Number.isNaN(minQty) || minQty < 0) {
+        showToast('Minimum quantity must be 0 or higher.');
+        return;
+      }
+      try {
+        await updateTruckInventory(item.id, { min_qty: minQty, origin: 'permanent' });
+        showToast('Minimum quantity updated.');
+        close();
+        await renderTruckListView(truck, 'inventory');
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  };
 
   function renderDraft() {
     list.innerHTML = '';
@@ -3083,20 +3291,29 @@ async function renderTruckListView(truck, listType) {
       body.append(form, foot);
       const { close } = openModalSimple({ title: 'Add Part', bodyEl: body });
       cancel.addEventListener('click', () => close());
-      save.addEventListener('click', () => {
+      save.addEventListener('click', async () => {
         const labelText = primaryInput.value.trim();
         const product = productMap.get(labelText);
         if (!product) return showToast('Select a valid product.');
-        const qty = Number(qtyInput.value || 0);
-        if (!qty) return showToast('Quantity is required.');
-        const existing = draft.find((item) => item.product_id === product.id);
-        if (existing) {
-          existing.qty += qty;
-        } else {
-          draft.push({ product_id: product.id, name: product.name, qty });
+       const minQty = Number(qtyInput.value || 0);
+        if (Number.isNaN(minQty) || minQty < 0) return showToast('Minimum quantity is required.');
+        const existing = items.find((item) => item.product_id === product.id);
+        const qty = existing?.qty ?? 0;
+        try {
+          await upsertTruckInventory({
+            truck_id: truckId,
+            product_id: product.id,
+            qty,
+            min_qty: minQty,
+            origin: 'permanent',
+          });
+          showToast('Part added.');
+          close();
+          await renderTruckListView(truck, 'inventory');
+        } catch (error) {
+          showToast(error.message);
         }
-        close();
-        renderDraft();
+        
       });
       return;
     }
@@ -3196,7 +3413,12 @@ async function renderTruckListView(truck, listType) {
     }
   });
 
+ if (isInventory) {
+  renderInventoryList();
+ }else {
   renderDraft();
+ }
+ 
   container.append(infoCard, listCard);
   viewContainer.innerHTML = '';
   viewContainer.appendChild(container);

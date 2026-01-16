@@ -186,20 +186,28 @@ export async function listTruckInventory(truckId) {
     .eq('truck_id', truckId)
     .order('created_at', { ascending: true });
   handleError(error, 'Load truck inventory');
-  return data || [];
+  return (data || []).filter((item) => {
+    if (item?.origin !== 'tech_added') return true;
+    return Number(item?.qty ?? 0) > 0;
+  });
 }
 
-export async function upsertTruckInventory({ truck_id, product_id, qty }) {
+export async function upsertTruckInventory({ truck_id, product_id, qty, min_qty, origin }) {
   const orgId = requireOrgId();
+  const payload = { org_id: orgId, truck_id, product_id };
+  if (qty !== undefined) payload.qty = qty;
+  if (min_qty !== undefined) payload.min_qty = min_qty;
+  if (origin !== undefined) payload.origin = origin;
   const { data, error } = await getClient()
     .from('truck_inventory')
-    .upsert({ org_id: orgId, truck_id, product_id, qty }, { onConflict: 'truck_id,product_id' })
+    .upsert(payload, { onConflict: 'truck_id,product_id' })
     .select()
     .single();
   handleError(error, 'Update truck inventory');
   return data;
 }
 
+export async function updateTruckInventory(id, payload) { return updateTable('truck_inventory', id, payload);} 
 export async function deleteTruckInventory(id) { return deleteTable('truck_inventory', id); }
 
 export async function listJobs(filter = {}) {
@@ -514,22 +522,23 @@ export async function listAttachments(jobId) {
 export async function addAttachment(payload) { return insertTable('attachments', payload); }
 
 export async function getRestockList(truckId) {
-  const [products, inventory] = await Promise.all([
-    listProducts(),
-    listTruckInventory(truckId),
-  ]);
-  const inventoryMap = new Map(inventory.map((item) => [item.product_id, item.qty]));
-  return products
-    .map((product) => {
-      const currentQty = inventoryMap.get(product.id) || 0;
-      const neededQty = Math.max(0, product.minimum_qty - currentQty);
+   const inventory = await listTruckInventory(truckId);
+  return inventory
+    .filter((item) => (item.origin || 'permanent') !== 'tech_added')
+    .map((item) => {
+      const product = item.products;
+      if (!product) return null;
+      const currentQty = Number(item.qty ?? 0);
+      const minQty = Number(item.min_qty ?? product.minimum_qty ?? 0);
+      const neededQty = Math.max(0, minQty - currentQty);
       return {
         product,
         currentQty,
         neededQty,
+        minQty,
       };
     })
-    .filter((entry) => entry.neededQty > 0)
+    .filter((entry) => entry && entry.neededQTY > 0)
     .sort((a, b) => a.product.name.localeCompare(b.product.name));
 }
 

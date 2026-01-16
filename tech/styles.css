@@ -350,6 +350,62 @@ transform: translateY(1px) scale(0.99);
   border: 1px solid var(--line);
 }
 
+.inventory-pill {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.inventory-pill-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.inventory-pill-name {
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inventory-pill-sku {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.inventory-pill-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.round-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.round-pill-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.round-pill-value {
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .card {
  background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--line);
@@ -565,6 +621,53 @@ textarea {
  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
 }
 
+.info-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 70;
+}
+
+.info-modal .modal-card {
+  width: min(420px, 92vw);
+  background: rgba(2, 6, 23, 0.96);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-title {
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.modal-body {
+  display: grid;
+  gap: 12px;
+}
+
+.modal-section {
+  display: grid;
+  gap: 6px;
+}
+
+.modal-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
 .selection-modal .modal-list {
   display: grid;
   gap: 10px;

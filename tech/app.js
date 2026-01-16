@@ -139,6 +139,63 @@ function closeSelectionModal() {
   state.selectionModal = null;
 }
 
+function openInfoModal({ title, bodyEl }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay show';
+  const modal = document.createElement('div');
+  modal.className = 'info-modal';
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  const head = document.createElement('div');
+  head.className = 'modal-head';
+  const headerTitle = document.createElement('div');
+  headerTitle.className = 'modal-title';
+  headerTitle.textContent = title || '';
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'pill tiny';
+  closeBtn.type = 'button';
+  closeBtn.textContent = 'Close';
+  const close = () => {
+    overlay.remove();
+    modal.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (event) => {
+    if (event.key === 'Escape') close();
+  };
+  closeBtn.addEventListener('click', close);
+  overlay.addEventListener('click', close);
+  head.append(headerTitle, closeBtn);
+  card.append(head, bodyEl);
+  modal.appendChild(card);
+  document.body.appendChild(overlay);
+  document.body.appendChild(modal);
+  document.addEventListener('keydown', onKey);
+  return { close };
+}
+
+function formatShelfLocation(shelf) {
+  if (!shelf) return 'Unassigned';
+  const tokens = shelf.split(',').map((token) => token.trim()).filter(Boolean);
+  if (!tokens.length) return shelf;
+  const segments = tokens.map((token) => {
+    const aisleMatch = token.match(/^(\d+)([A-Za-z])$/);
+    if (aisleMatch) {
+      return `Aisle ${aisleMatch[1]} side ${aisleMatch[2].toUpperCase()} (${token})`;
+    }
+    const shelfMatch = token.match(/^S(\d+)$/i);
+    if (shelfMatch) {
+      return `Shelf ${shelfMatch[1]} (${token})`;
+    }
+    const binMatch = token.match(/^B(\d+)$/i);
+    if (binMatch) {
+      return `Bin ${binMatch[1]} (${token})`;
+    }
+    return token;
+  });
+  return segments.join(' • ');
+}
+
 function openSelectionModal() {
   if (!state.boot) return;
   closeSelectionModal();
@@ -192,7 +249,7 @@ const select = modal.querySelector('#truck-select');
     list.appendChild(btn);
   });
 
-modal.querySelector('#selection-done').addEventListener('click', closeSelectionModal);
+  modal.querySelector('#selection-done').addEventListener('click', closeSelectionModal);
   document.body.appendChild(overlay);
   document.body.appendChild(modal);
   state.selectionModal = { overlay, modal};
@@ -251,7 +308,7 @@ function renderDrawer() {
       </button>
       <button class="menuBtn" data-action="master">
         <div class="menuLeft">
-          <div class="name">Master Truck Inventory</div>
+          <div class="name">Truck Inventory</div>
           <div class="desc">Minimum stock list</div>
         </div>
         <span class="chev">›</span>
@@ -459,11 +516,14 @@ async function renderInventory() {
       showToast('Select part and qty.');
       return;
     }
-    await executeOrQueue('upsertInventory', {
+     const existing = items.find((item) => item.product_id === productId);
+    const payload = {
       truck_id: state.truckId,
       product_id: productId,
       qty,
-    }, upsertTruckInventory);
+    };
+    if (!existing) payload.renderLogin = 'tech_added';
+    await executeOrQueue('upsertInventory', payload, upserTruckInventory);
     renderInventory();
   });
    panel.querySelector('#inventory-back').addEventListener('click', renderHome);
@@ -477,37 +537,139 @@ async function renderInventory() {
   screenContainer(container);
 }
 
+function openInventoryDetailsModal(item) {
+  const product = item.products || {};
+  const body = document.createElement('div');
+  body.className = 'modal-body';
+  body.innerHTML = `
+    <div class="modal-section">
+      <div class="modal-subtitle">Description</div>
+      <div>${product.description || 'No description available.'}</div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-subtitle">Shelf Location</div>
+      <div>${formatShelfLocation(product.shelf)}</div>
+    </div>
+    <div class="modal-section">
+      <div class="modal-subtitle">Current Qty</div>
+      <div>${Number(item.qty ?? 0)}</div>
+    </div>
+  `;
+  openInfoModal({ title: product.name || 'Part details', bodyEl: body });
+}
+
+function openAddInventoryModal(items) {
+  const body = document.createElement('div');
+  body.className = 'modal-body';
+  const productLabel = document.createElement('label');
+  productLabel.textContent = 'Part';
+  const productInput = document.createElement('input');
+  productInput.setAttribute('list', 'inventory-part-options');
+  const dataList = document.createElement('datalist');
+  dataList.id = 'inventory-part-options';
+  const productMap = new Map();
+  (state.boot?.products || []).forEach((product) => {
+    const label = `${product.name}${product.sku ? ` (${product.sku})` : ''}`;
+    const option = document.createElement('option');
+    option.value = label;
+    dataList.appendChild(option);
+    productMap.set(label, product);
+  });
+  const qtyLabel = document.createElement('label');
+  qtyLabel.textContent = 'Quantity';
+  const qtyInput = document.createElement('input');
+  qtyInput.type = 'number';
+  qtyInput.min = '1';
+  qtyInput.value = '1';
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'action secondary';
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Cancel';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'action';
+  saveBtn.type = 'button';
+  saveBtn.textContent = 'Save';
+  actions.append(cancelBtn, saveBtn);
+  body.append(productLabel, productInput, dataList, qtyLabel, qtyInput, actions);
+  const { close } = openInfoModal({ title: 'Add Part', bodyEl: body });
+  cancelBtn.addEventListener('click', close);
+  saveBtn.addEventListener('click', async () => {
+    const label = productInput.value.trim();
+    const product = productMap.get(label);
+    const qty = Number(qtyInput.value || 0);
+    if (!product) {
+      showToast('Select a valid part.');
+      return;
+    }
+    if (!qty || qty < 0) {
+      showToast('Enter a valid quantity.');
+      return;
+    }
+    const existing = items.find((entry) => entry.product_id === product.id);
+    const payload = {
+      truck_id: state.truckId,
+      product_id: product.id,
+      qty: (existing?.qty ?? 0) + qty,
+    };
+    if (!existing) payload.origin = 'tech_added';
+    await executeOrQueue('upsertInventory', payload, upsertTruckInventory);
+    close();
+    renderMasterInventory();
+  });
+}
+
 async function renderMasterInventory() {
-  const restock = await getRestockList(state.truckId);
+  const items = await listTruckInventory(state.truckID);
   const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
   panel.innerHTML = `
     <div class="screenTitle">
-      <button class="backBtn" id="master-back">←</button>
-      <h2>Master Truck Inventory</h2>
-      <span class="badge">${getTruckLabel()}</span>
+      <button class="backBtn" id="truck-inventory-back">←</button>
+      <h2>Truck Inventory</h2>
+      <div class="screenActions">
+        <button class="pill tiny" id="inventory-add">Add Part</button>
+        <span class="badge">${getTruckLabel()}</span>
+      </div>
     </div>
   `;
   const card = document.createElement('div');
-  card.className = 'card';
-  card.innerHTML = '<h3>Minimum stock list</h3>';
+  card.className = 'card list';
+  card.innerHTML = '<h3>Truck Inventory</h3>'
   panel.appendChild(card);
-  restock.forEach((item) => {
+   items.forEach((item) => {
+    const product = item.products || {};
+    const minQty = Number(item.min_qty ?? product.minimum_qty ?? 0);
     const pill = document.createElement('button');
-    pill.className = 'pill';
+    pill.className = 'pill inventory-pill';
     pill.innerHTML = `
-      <div>${item.product.name}</div>
-      <span class="badge warning">Min ${item.product.minimum_qty}</span>
+       <div class="inventory-pill-main">
+        <div class="inventory-pill-name">${product.name || 'Part'}</div>
+        <div class="inventory-pill-sku"><em>${product.sku || 'SKU N/A'}</em></div>
+      </div>
+      <div class="inventory-pill-meta">
+        <span class="round-pill">
+          <span class="round-pill-label">Min</span>
+          <span class="round-pill-value">${minQty || 0}</span>
+        </span>
+        <span class="round-pill">
+          <span class="round-pill-label">Shelf</span>
+          <span class="round-pill-value">${Number(item.qty ?? 0)}</span>
+        </span>
+      </div>
     `;
+    pill.addEventListener('click', () => openInventoryDetailsModal(item));
     card.appendChild(pill);
   });
-  if (!restock.length) card.innerHTML += '<p>No minimums set.</p>';
-  panel.querySelector('#master-back').addEventListener('click', renderHome);
+  if (!items.length) card.innerHTML += '<p>No inventory set for this truck.</p>';
+  panel.querySelector('#truck-inventory-back').addEventListener('click', renderHome);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderHome);
-  container.appendChild(backBtn);
+   panel.appendChild(backBtn);
+  panel.querySelector('#inventory-add').addEventListener('click', () => openAddInventoryModal(items));
   screenContainer(container);
 }
 
