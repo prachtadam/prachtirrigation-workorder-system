@@ -597,7 +597,8 @@ input[type="file"]{
 /* Dark select arrow */
 select{
   appearance: none;
-  background-image:
+  background-color: rgba(255,255,255,.05);
+  background-image: 
     linear-gradient(45deg, transparent 50%, rgba(232,238,247,.75) 50%),
     linear-gradient(135deg, rgba(232,238,247,.75) 50%, transparent 50%);
   background-position:
@@ -607,7 +608,10 @@ select{
   background-repeat: no-repeat;
   padding-right: 34px;
 }
-
+select option {
+    background-color: var(--bg);
+    color: var(--text);
+}
 /* -----------------------------
    11) BUTTONS
 ------------------------------ */
@@ -1268,6 +1272,82 @@ button.action.wide{
   cursor: pointer;
   font-weight: 900;
   line-height: 1;
+}
+.parts-row{
+  display:grid !important;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(220px, 2fr) minmax(220px, 1.4fr) minmax(120px, .6fr);
+  gap: 12px !important;
+  align-items:center !important;
+  border-radius: 16px !important;
+  padding: 12px 14px !important;
+  text-align:left;
+}
+
+.parts-name{
+  display:flex;
+  flex-direction:column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.parts-name strong{
+  font-weight: 980;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.parts-sku{
+  font-style: italic;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.parts-desc{
+  color: rgba(232,238,247,.9);
+  font-weight: 700;
+  min-width: 0;
+}
+
+.parts-qty{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 6px;
+  align-items:center;
+}
+
+.parts-shelf{
+  display:flex;
+  justify-content:flex-end;
+}
+
+.qty-pill{
+  display:inline-flex;
+  align-items:center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.06);
+  font-weight: 900;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: var(--shadow-xs);
+  white-space: nowrap;
+}
+
+.qty-pill .pill-num{
+  font-size: 13px;
+}
+
+@media (max-width: 900px){
+  .parts-row{
+    grid-template-columns: 1fr;
+    text-align:left;
+  }
+  .parts-shelf{
+    justify-content:flex-start;
+  }
 }
 
 /* Modal footer buttons */

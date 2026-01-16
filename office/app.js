@@ -951,7 +951,378 @@ async function renderUsersView() {
   viewContainer.innerHTML = '';
   viewContainer.appendChild(listCard);
 }
+async function renderJobTypesView() {
+  viewTitle.textContent = 'Job Types';
+  viewSubtitle.textContent = 'Define job categories.';
+  viewActions.innerHTML = '';
 
+  const addBtn = document.createElement('button');
+  addBtn.className = 'action';
+  addBtn.type = 'button';
+  addBtn.textContent = 'Add Job Type';
+  viewActions.appendChild(addBtn);
+
+  const jobTypes = await listJobTypes();
+
+  const listCard = document.createElement('div');
+  listCard.className = 'card list';
+
+  const openJobTypeModal = ({ jobType } = {}) => {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(jobType ? 'Edit Job Type' : 'Add Job Type')}">
+        <div class="modal-head">
+          <div class="modal-title">${jobType ? 'Edit Job Type' : 'Add Job Type'}</div>
+          <div class="modal-actions">
+            ${jobType ? '<button class="pill tiny danger" type="button" data-delete>Delete</button>' : ''}
+            <button class="pill tiny" type="button" data-close>Close</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <form class="form-grid" id="job-type-form"></form>
+        </div>
+        <div class="modal-foot">
+          <button class="secondary" type="button" data-cancel>Cancel</button>
+          <button class="action" type="button" data-save>Save</button>
+        </div>
+      </div>
+      <button class="modal-scrim" aria-label="Close"></button>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => {
+      modal.remove();
+    };
+
+    modal.querySelector('[data-close]').addEventListener('click', close);
+    modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+    const form = modal.querySelector('#job-type-form');
+    const fields = [
+      { key: 'name', label: 'Job Type Name' },
+      { key: 'description', label: 'Description', type: 'textarea' },
+    ];
+
+    const inputs = {};
+    fields.forEach((field) => {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      let input;
+      if (field.type === 'textarea') {
+        input = document.createElement('textarea');
+      } else {
+        input = document.createElement('input');
+      }
+      input.name = field.key;
+      input.value = jobType?.[field.key] || '';
+      inputs[field.key] = input;
+      wrap.append(label, input);
+      form.appendChild(wrap);
+    });
+
+    modal.querySelector('[data-cancel]').addEventListener('click', () => {
+      form.reset();
+      close();
+    });
+
+    modal.querySelector('[data-save]').addEventListener('click', async () => {
+      const payload = {};
+      fields.forEach((field) => {
+        payload[field.key] = inputs[field.key].value.trim();
+      });
+      if (!payload.name) {
+        showToast('Job type name is required.');
+        return;
+      }
+      try {
+        if (jobType) {
+          const jobTypeId = getId(jobType);
+          if (!jobTypeId) throw new Error('Missing Supabase ID for update.');
+          await updateJobType(jobTypeId, payload);
+          showToast('Job type updated.');
+        } else {
+          await createJobType(payload);
+          showToast('Job type added.');
+        }
+        await refreshBoot();
+        close();
+        await renderJobTypesView();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+
+    const deleteBtn = modal.querySelector('[data-delete]');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (!jobType) return;
+        if (!confirm('Delete this job type? This cannot be undone.')) return;
+        try {
+          const jobTypeId = getId(jobType);
+          if (!jobTypeId) throw new Error('Missing Supabase ID for delete.');
+          await deleteJobType(jobTypeId);
+          showToast('Job type deleted.');
+          await refreshBoot();
+          close();
+          await renderJobTypesView();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    }
+  };
+
+  addBtn.addEventListener('click', () => openJobTypeModal());
+
+  jobTypes.forEach((jobType) => {
+    const pill = document.createElement('button');
+    pill.className = 'pill';
+    pill.type = 'button';
+    pill.innerHTML = `
+      <div>
+        <strong>${escapeHtml(jobType.name || 'Job Type')}</strong>
+        <div class="muted">${escapeHtml(jobType.description || '')}</div>
+      </div>
+    `;
+    pill.addEventListener('click', () => openJobTypeModal({ jobType }));
+    listCard.appendChild(pill);
+  });
+
+  if (!jobTypes.length) {
+    listCard.innerHTML += '<p>No job types yet.</p>';
+  }
+
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(listCard);
+}
+
+async function renderPartsView() {
+  viewTitle.textContent = 'Parts';
+  viewSubtitle.textContent = 'Master product list and minimums.';
+  viewActions.innerHTML = '';
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'action';
+  addBtn.type = 'button';
+  addBtn.textContent = 'Add Part';
+
+  const exportBtn = document.createElement('button');
+  exportBtn.className = 'pill';
+  exportBtn.textContent = 'Export CSV';
+  const importInput = document.createElement('input');
+  importInput.type = 'file';
+  importInput.accept = '.csv';
+
+  viewActions.append(addBtn, exportBtn, importInput);
+
+  const fields = [
+    { key: 'sku', label: 'SKU' },
+    { key: 'name', label: 'Part Name' },
+    { key: 'description', label: 'Description', type: 'textarea' },
+    { key: 'minimum_qty', label: 'Minimum Qty', type: 'number' },
+  ];
+
+  const loadInventory = async () => {
+    const client = getSupabaseClient();
+    const { orgId } = getConfig();
+    let query = client.from('truck_inventory').select('truck_id, product_id, qty, trucks(truck_identifier)');
+    if (orgId) query = query.eq('org_id', orgId);
+    const { data, error } = await query;
+    if (error) throw new Error('Unable to load truck inventory.');
+    return data || [];
+  };
+
+  const [parts, inventory] = await Promise.all([listProducts(), loadInventory()]);
+
+  exportBtn.addEventListener('click', () => exportCsv(parts, 'parts', fields));
+  importInput.addEventListener('change', (event) => handleImportCsv(event, fields, createProduct));
+
+  const truckPalette = [
+    { bg: 'rgba(34,197,94,.18)', border: 'rgba(34,197,94,.45)', text: '#86efac' },
+    { bg: 'rgba(96,165,250,.18)', border: 'rgba(96,165,250,.45)', text: '#bfdbfe' },
+    { bg: 'rgba(167,139,250,.18)', border: 'rgba(167,139,250,.45)', text: '#ddd6fe' },
+    { bg: 'rgba(245,158,11,.18)', border: 'rgba(245,158,11,.45)', text: '#fde68a' },
+    { bg: 'rgba(249,115,22,.18)', border: 'rgba(249,115,22,.45)', text: '#fdba74' },
+    { bg: 'rgba(236,72,153,.18)', border: 'rgba(236,72,153,.45)', text: '#fbcfe8' },
+  ];
+
+  const trucks = (state.boot?.trucks || []).slice().sort((a, b) => {
+    return (a.truck_identifier || '').localeCompare(b.truck_identifier || '');
+  });
+  const inventoryMap = new Map();
+  inventory.forEach((item) => {
+    if (!inventoryMap.has(item.product_id)) {
+      inventoryMap.set(item.product_id, new Map());
+    }
+    inventoryMap.get(item.product_id).set(item.truck_id, Number(item.qty || 0));
+  });
+
+  const listCard = document.createElement('div');
+  listCard.className = 'card list';
+
+  const openPartModal = ({ part } = {}) => {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(part ? 'Edit Part' : 'Add Part')}">
+        <div class="modal-head">
+          <div class="modal-title">${part ? 'Edit Part' : 'Add Part'}</div>
+          <div class="modal-actions">
+            ${part ? '<button class="pill tiny danger" type="button" data-delete>Delete</button>' : ''}
+            <button class="pill tiny" type="button" data-close>Close</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <form class="form-grid" id="part-form"></form>
+        </div>
+        <div class="modal-foot">
+          <button class="secondary" type="button" data-cancel>Cancel</button>
+          <button class="action" type="button" data-save>Save</button>
+        </div>
+      </div>
+      <button class="modal-scrim" aria-label="Close"></button>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => {
+      modal.remove();
+    };
+
+    modal.querySelector('[data-close]').addEventListener('click', close);
+    modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+    const form = modal.querySelector('#part-form');
+    const inputs = {};
+    fields.forEach((field) => {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      let input;
+      if (field.type === 'textarea') {
+        input = document.createElement('textarea');
+      } else {
+        input = document.createElement('input');
+        if (field.type === 'number') input.type = 'number';
+      }
+      input.name = field.key;
+      input.value = part?.[field.key] ?? '';
+      inputs[field.key] = input;
+      wrap.append(label, input);
+      form.appendChild(wrap);
+    });
+
+    modal.querySelector('[data-cancel]').addEventListener('click', () => {
+      form.reset();
+      close();
+    });
+
+    modal.querySelector('[data-save]').addEventListener('click', async () => {
+      const payload = {};
+      fields.forEach((field) => {
+        payload[field.key] = inputs[field.key].value.trim();
+      });
+      if (!payload.name) {
+        showToast('Part name is required.');
+        return;
+      }
+      try {
+        if (part) {
+          const partId = getId(part);
+          if (!partId) throw new Error('Missing Supabase ID for update.');
+          await updateProduct(partId, payload);
+          showToast('Part updated.');
+        } else {
+          await createProduct(payload);
+          showToast('Part added.');
+        }
+        await refreshBoot();
+        close();
+        await renderPartsView();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+
+    const deleteBtn = modal.querySelector('[data-delete]');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (!part) return;
+        if (!confirm('Delete this part? This cannot be undone.')) return;
+        try {
+          const partId = getId(part);
+          if (!partId) throw new Error('Missing Supabase ID for delete.');
+          await deleteProduct(partId);
+          showToast('Part deleted.');
+          await refreshBoot();
+          close();
+          await renderPartsView();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+    }
+  };
+
+  addBtn.addEventListener('click', () => openPartModal());
+
+  parts.forEach((part) => {
+    const row = document.createElement('button');
+    row.className = 'pill parts-row';
+    row.type = 'button';
+
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'parts-name';
+    nameWrap.innerHTML = `
+      <strong>${escapeHtml(part.name || 'Part')}</strong>
+      <div class="parts-sku">${escapeHtml(part.sku || 'SKU N/A')}</div>
+    `;
+
+    const desc = document.createElement('div');
+    desc.className = 'parts-desc';
+    desc.textContent = part.description || 'No description provided.';
+
+    const qtyWrap = document.createElement('div');
+    qtyWrap.className = 'parts-qty';
+
+    trucks.forEach((truck, index) => {
+      const qty = inventoryMap.get(part.id)?.get(truck.id) || 0;
+      const pill = document.createElement('span');
+      pill.className = 'qty-pill';
+      pill.innerHTML = `
+        <span class="pill-label">${escapeHtml(truck.truck_identifier || `Truck ${index + 1}`)}</span>
+        <span class="pill-num">${qty}</span>
+      `;
+      const palette = truckPalette[index % truckPalette.length];
+      pill.style.background = palette.bg;
+      pill.style.borderColor = palette.border;
+      pill.style.color = palette.text;
+      qtyWrap.appendChild(pill);
+    });
+
+    const shelfWrap = document.createElement('div');
+    shelfWrap.className = 'parts-shelf';
+    const shelfPill = document.createElement('span');
+    shelfPill.className = 'qty-pill';
+    shelfPill.innerHTML = `
+      <span class="pill-label">Shelf</span>
+      <span class="pill-num">${part.minimum_qty || 0}</span>
+    `;
+    shelfWrap.appendChild(shelfPill);
+
+    row.append(nameWrap, desc, qtyWrap, shelfWrap);
+    row.addEventListener('click', () => openPartModal({ part }));
+    listCard.appendChild(row);
+  });
+
+  if (!parts.length) {
+    listCard.innerHTML += '<p>No parts yet.</p>';
+  }
+
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(listCard);
+}
 async function renderRequests() {
   viewTitle.textContent = 'Requests';
   viewSubtitle.textContent = 'Resolve and archive tech requests.';
@@ -2852,34 +3223,8 @@ const viewHandlers = {
   }),
   trucks: renderTrucksPremium,
   users: renderUsersView,
-  'job-types': () => renderListView({
-    title: 'Job Types',
-    subtitle: 'Define job categories.',
-    listLoader: listJobTypes,
-    createHandler: createJobType,
-    updateHandler: updateJobType,
-    deleteHandler: deleteJobType,
-    fields: [
-      { key: 'name', label: 'Job Type Name' },
-      { key: 'description', label: 'Description', type: 'textarea' },
-    ],
-  }),
-  products: () => renderListView({
-    title: 'Parts',
-    subtitle: 'Master product list and minimums.',
-    listLoader: listProducts,
-    createHandler: createProduct,
-    updateHandler: updateProduct,
-    deleteHandler: deleteProduct,
-    enableImportExport: true,
-    filePrefix: 'parts',
-    fields: [
-      { key: 'sku', label: 'SKU' },
-      { key: 'name', label: 'Part Name' },
-      { key: 'description', label: 'Description', type: 'textarea' },
-      { key: 'minimum_qty', label: 'Minimum Qty', type: 'number' },
-    ],
-  }),
+   'job-types': renderJobTypesView,
+  products: renderPartsView,
   tools: renderToolsView,
   requests: renderRequests,
   'out-of-stock': renderOutOfStock,
