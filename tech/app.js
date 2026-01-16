@@ -45,6 +45,12 @@ const state = {
   currentJob: null,
   offlineQueueHandlers: {},
 };
+const mapState = {
+  map: null,
+  markersLayer: null,
+  watchId: null,
+  locationMarker: null,
+};
 
 function showToast(message) {
   toast.textContent = message;
@@ -57,6 +63,7 @@ function showToast(message) {
 function setHelpers(helpers) {
   state.helpers = helpers;
   localStorage.setItem('TECH_HELPERS', JSON.stringify(helpers));
+  updateTechDisplay();
 }
 
 function setTruck(truckId) {
@@ -89,6 +96,68 @@ function screenContainer(content) {
   app.innerHTML = '';
   app.appendChild(content);
 }
+function getHelperLabel() {
+  if (!state.helpers.length) return 'Select helpers';
+  return state.helpers.join(', ');
+}
+
+function updateTechDisplay() {
+  const techName = document.getElementById('tech-name');
+  const helperNames = document.getElementById('tech-helpers');
+  if (techName) techName.textContent = state.tech?.full_name || 'Unassigned';
+  if (helperNames) helperNames.textContent = getHelperLabel();
+}
+
+function closeHelperModal() {
+  if (!state.helperModal) return;
+  state.helperModal.overlay.remove();
+  state.helperModal.modal.remove();
+  state.helperModal = null;
+}
+
+function openHelperModal() {
+  if (!state.boot) return;
+  closeHelperModal();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay show';
+  overlay.addEventListener('click', closeHelperModal);
+
+  const modal = document.createElement('div');
+  modal.className = 'helper-modal';
+  modal.innerHTML = `
+    <div class="modal-card">
+      <h3>Select Helpers</h3>
+      <div class="modal-list" id="helper-options"></div>
+      <div class="actions">
+        <button class="action secondary" type="button" id="helpers-done">Done</button>
+      </div>
+    </div>
+  `;
+
+  const list = modal.querySelector('#helper-options');
+  state.boot.users.filter((user) => user.is_helper).forEach((helper) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pill';
+    btn.textContent = helper.full_name;
+    btn.addEventListener('click', () => {
+      const next = state.helpers.includes(helper.full_name)
+        ? state.helpers.filter((name) => name !== helper.full_name)
+        : [...state.helpers, helper.full_name];
+      setHelpers(next);
+      btn.classList.toggle('active');
+    });
+    if (state.helpers.includes(helper.full_name)) btn.classList.add('active');
+    list.appendChild(btn);
+  });
+
+  modal.querySelector('#helpers-done').addEventListener('click', closeHelperModal);
+  document.body.appendChild(overlay);
+  document.body.appendChild(modal);
+  state.helperModal = { overlay, modal };
+}
+
 
 function renderHeader() {
   const header = document.createElement('div');
@@ -99,10 +168,11 @@ function renderHeader() {
       <div class="muted">Truck</div>
       <select id="truck-select"></select>
     </div>
-    <div>
+    <button class="tech-summary" id="tech-selector" type="button">
       <div class="muted">Tech</div>
-      <div>${state.tech?.full_name || 'Unassigned'}</div>
-    </div>
+     <div class="tech-name" id="tech-name">${state.tech?.full_name || 'Unassigned'}</div>
+      <div class="tech-helpers" id="tech-helpers">${getHelperLabel()}</div>
+    </button>
   `;
 
   const select = header.querySelector('#truck-select');
@@ -117,6 +187,7 @@ function renderHeader() {
   select.addEventListener('change', () => setTruck(select.value));
 
   header.querySelector('#menu-btn').addEventListener('click', () => toggleDrawer(true));
+  header.querySelector('#tech-selector').addEventListener('click', openHelperModal);
   return header;
 }
 
@@ -132,26 +203,9 @@ function renderDrawer() {
     <button class="pill" data-action="current">Current Inventory</button>
     <button class="pill" data-action="master">Master Truck Inventory</button>
     <button class="pill" data-action="tools">Truck Tool List</button>
-    <h3>Helpers</h3>
-    <div class="list" id="helpers-list"></div>
     <button class="pill" data-action="logout">Log Out</button>
   `;
 
-  const helpersList = drawer.querySelector('#helpers-list');
-  state.boot.users.filter((user) => user.is_helper).forEach((helper) => {
-    const btn = document.createElement('button');
-    btn.className = 'pill';
-    btn.textContent = helper.full_name;
-    btn.addEventListener('click', () => {
-      const next = state.helpers.includes(helper.full_name)
-        ? state.helpers.filter((name) => name !== helper.full_name)
-        : [...state.helpers, helper.full_name];
-      setHelpers(next);
-      btn.classList.toggle('active');
-    });
-    if (state.helpers.includes(helper.full_name)) btn.classList.add('active');
-    helpersList.appendChild(btn);
-  });
 
   drawer.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -191,6 +245,7 @@ function renderHome() {
     <button class="pill large" data-action="refuel">Re-fuel</button>
     <button class="pill large" data-action="requests">Requests</button>
     <button class="pill large" data-action="receipts">Receipts</button>
+    <button class="pill large" data-action="map-view">Map View</button>
   `;
   container.appendChild(main);
   screenContainer(container);
@@ -204,6 +259,7 @@ function renderHome() {
       if (action === 'refuel') return renderRefuel();
       if (action === 'requests') return renderRequests();
       if (action === 'receipts') return renderReceipts();
+      if (action === 'map-view') return renderMapView();
     });
   });
 
@@ -435,9 +491,7 @@ async function renderOpenJobs() {
   const activeEvents = await listActiveJobEvents(jobs.map((job) => job.id));
   const container = document.createElement('div');
   container.className = 'main';
-  const map = document.createElement('div');
-  map.className = 'card';
-  map.textContent = 'Map view placeholder for open + paused jobs.';
+ 
   const card = document.createElement('div');
   card.className = 'card list';
   card.innerHTML = '<h3>Open Jobs</h3>';
@@ -474,11 +528,173 @@ async function renderOpenJobs() {
   backBtn.addEventListener('click', renderHome);
 
   container.appendChild(card);
-  container.appendChild(map);
+  
   container.appendChild(backBtn);
   screenContainer(container);
 }
+function mapStatusColor(status = '') {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('paused')) return '#f97316';
+  if (normalized.includes('on_the_way') || normalized.includes('on_site') || normalized.includes('progress')) return '#3b82f6';
+  if (normalized.includes('open')) return '#22c55e';
+  return '#94a3b8';
+}
 
+function getJobCoords(job) {
+  const lat = Number.parseFloat(job.fields?.lat);
+  const lon = Number.parseFloat(job.fields?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return { lat, lng: lon };
+}
+
+function buildLeafletMarkerIcon(color) {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44" fill="none">
+      <path d="M17 1C9.28 1 3 7.28 3 15c0 9.5 14 27.5 14 27.5S31 24.5 31 15C31 7.28 24.72 1 17 1Z" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
+      <circle cx="17" cy="15" r="6.4" fill="rgba(15,23,42,0.18)"/>
+      <circle cx="17" cy="15" r="2.6" fill="#e2e8f0"/>
+    </svg>
+  `;
+  return window.L.divIcon({
+    className: 'job-pin',
+    html: svg,
+    iconSize: [34, 44],
+    iconAnchor: [17, 44],
+    popupAnchor: [0, -40],
+  });
+}
+
+function renderMapView() {
+  const container = document.createElement('div');
+  container.className = 'main';
+  container.innerHTML = `
+    <div class="card map-card">
+      <h3>Map View</h3>
+      <div class="map-canvas" id="tech-map"></div>
+      <div class="map-overlay" id="tech-map-overlay">Loading map…</div>
+    </div>
+  `;
+
+  const backBtn = document.createElement('button');
+  backBtn.className = 'pill';
+  backBtn.textContent = 'Back';
+  backBtn.addEventListener('click', () => {
+    stopMapTracking();
+    renderHome();
+  });
+  container.appendChild(backBtn);
+  screenContainer(container);
+  renderTechMap();
+}
+
+function stopMapTracking() {
+  if (mapState.watchId) {
+    navigator.geolocation.clearWatch(mapState.watchId);
+    mapState.watchId = null;
+  }
+}
+
+async function renderTechMap() {
+  const mapCanvas = document.getElementById('tech-map');
+  const overlay = document.getElementById('tech-map-overlay');
+  if (!mapCanvas || !overlay) return;
+  if (!window.L) {
+    overlay.textContent = 'Map view requires Leaflet to load.';
+    return;
+  }
+
+  const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED] });
+  const coordsJobs = jobs.map((job) => ({ job, coords: getJobCoords(job) })).filter(({ coords }) => coords);
+
+  if (!coordsJobs.length && !navigator.geolocation) {
+    overlay.textContent = 'No job locations or device location available.';
+  } else {
+    overlay.hidden = true;
+  }
+
+  if (mapState.map) {
+    mapState.map.remove();
+    mapState.map = null;
+  }
+
+  const map = window.L.map(mapCanvas, {
+    zoomControl: true,
+    attributionControl: true,
+  });
+  mapState.map = map;
+
+  window.L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery?MapServer/tile/{z}/{y}/{x}',
+    {
+      attribution: 'Tiles © Esri',
+      maxZoom: 19,
+    },
+  ).addTo(map);
+
+  const markersLayer = window.L.layerGroup().addTo(map);
+  mapState.markersLayer = markersLayer;
+
+  coordsJobs.forEach(({ job, coords }) => {
+    const marker = window.L.marker(coords, {
+      title: job.customers?.name || 'Job',
+      icon: buildLeafletMarkerIcon(mapStatusColor(job.status)),
+    }).addTo(markersLayer);
+
+    const content = document.createElement('div');
+    content.innerHTML = `
+      <strong>${job.customers?.name || 'Customer'}</strong>
+      <div class="muted">${job.fields?.name || 'Field'} · ${job.job_types?.name || 'Job Type'}</div>
+    `;
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'pill';
+    openBtn.textContent = 'Open Job';
+    openBtn.addEventListener('click', () => {
+      map.closePopup();
+      renderJobCard(job);
+    });
+    content.appendChild(openBtn);
+    marker.bindPopup(content, { closeButton: true, autoPan: true });
+  });
+
+  const bounds = coordsJobs.length
+    ? window.L.latLngBounds(coordsJobs.map(({ coords }) => coords))
+    : null;
+
+  if (navigator.geolocation) {
+    mapState.watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        const currentLatLng = { lat: latitude, lng: longitude };
+        if (!mapState.locationMarker) {
+          mapState.locationMarker = window.L.circleMarker(currentLatLng, {
+            radius: 8,
+            color: '#38bdf8',
+            fillColor: '#38bdf8',
+            fillOpacity: 0.9,
+          }).addTo(map);
+        } else {
+          mapState.locationMarker.setLatLng(currentLatLng);
+        }
+        if (bounds) {
+          bounds.extend(currentLatLng);
+          map.fitBounds(bounds.pad(0.2));
+        } else {
+          map.setView(currentLatLng, 14);
+        }
+      },
+      () => {
+        if (bounds) map.fitBounds(bounds.pad(0.2));
+        else map.setView([39.5, -98.35], 4);
+      },
+      { enableHighAccuracy: true },
+    );
+  } else if (coordsJobs.length) {
+    map.fitBounds(bounds.pad(0.2));
+  } else {
+    map.setView([39.5, -98.35], 4);
+  }
+}
 function renderJobCard(job) {
   state.currentJob = job;
   const container = document.createElement('div');
@@ -1208,8 +1424,7 @@ state.offlineQueueHandlers = {
     await generateAndUploadReports({ job, diagnostics, repairs, parts, durations });
   },
 };
-
+}
 window.addEventListener('online', syncOutbox);
 
 renderLogin();
-}

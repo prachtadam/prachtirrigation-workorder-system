@@ -546,6 +546,11 @@ export async function commitRestock(truckId, restockItems) {
         qty: item.currentQty + item.acquiredQty,
       }, { onConflict: 'truck_id,product_id' });
     handleError(error, 'Commit restock');
+    const currentOnHand = Number(item.product?.quantity_on_hand ?? item.product?.minimum_qty ?? 0);
+    const newOnHand = Math.max(0, currentOnHand - item.acquiredQty);
+    if (!Number.isNaN(newOnHand)) {
+      await updateProduct(item.product.id, { quantity_on_hand: newOnHand });
+    }
   }
 }
 

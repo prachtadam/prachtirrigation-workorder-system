@@ -1100,7 +1100,7 @@ async function renderJobTypesView() {
 
 async function renderPartsView() {
   viewTitle.textContent = 'Parts';
-  viewSubtitle.textContent = 'Master product list and minimums.';
+  viewSubtitle.textContent = 'Master product list and shelf quantities.';
   viewActions.innerHTML = '';
 
   const addBtn = document.createElement('button');
@@ -1121,7 +1121,8 @@ async function renderPartsView() {
     { key: 'sku', label: 'SKU' },
     { key: 'name', label: 'Part Name' },
     { key: 'description', label: 'Description', type: 'textarea' },
-    { key: 'minimum_qty', label: 'Minimum Qty', type: 'number' },
+    {key: 'shelf', label: 'Shelf'},
+    { key: 'quantity_on_hand', label: 'Quantity On Hand', type: 'number' },
   ];
 
   const loadInventory = async () => {
@@ -1207,7 +1208,11 @@ async function renderPartsView() {
         if (field.type === 'number') input.type = 'number';
       }
       input.name = field.key;
-      input.value = part?.[field.key] ?? '';
+      if (field.key === 'quantity_on_hand') {
+        input.value = part?.quantity_on_hand ?? part?.minimum_qty ?? '';
+      } else {
+        input.value = part?.[field.key] ?? '';
+      }
       inputs[field.key] = input;
       wrap.append(label, input);
       form.appendChild(wrap);
@@ -1307,9 +1312,16 @@ async function renderPartsView() {
     shelfPill.className = 'qty-pill';
     shelfPill.innerHTML = `
       <span class="pill-label">Shelf</span>
-      <span class="pill-num">${part.minimum_qty || 0}</span>
+      <span class="pill-num">${escapeHtml(part.shelf || 'Unassigned')}</span>
     `;
-    shelfWrap.appendChild(shelfPill);
+    const onHand = part.quantity_on_hand ?? part.minimum_qty ?? 0;
+    const onHandPill = document.createElement('span');
+    onHandPill.className = 'qty-pill';
+    onHandPill.innerHTML = `
+      <span class="pill-label">Qty on Hand</span>
+      <span class="pill-num">${onHand}</span>
+    `;
+    shelfWrap.append(shelfPill, onHandPill)
 
     row.append(nameWrap, desc, qtyWrap, shelfWrap);
     row.addEventListener('click', () => openPartModal({ part }));
