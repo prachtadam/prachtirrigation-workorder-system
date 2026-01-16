@@ -411,7 +411,14 @@
 <div class="toast" id="toast"></div>
 <div class="footerHint" id="footerHint"></div>
 
-<script>
+<script type="module">
+import {
+  listProducts,
+  createProduct as createPart,
+  updateProduct as updatePart,
+  deleteProduct as deletePart,
+} from '../shared/db.js';
+import { getConfig } from '../shared/config.js';
 /* =========================================================
    Shelf Map v3 (visual map + shelves + bins + inventory runs)
    Built to preserve the existing styling + components.
@@ -472,6 +479,93 @@ let STATE = loadState();
 let ROUTE = "map";
 let ROUTE_PARAMS = {}; // for aisle/shelf/inventory step routes
 let NAV_STACK = [];    // for back button
+
+const STORAGE_KEYS = {
+  inventoryEvents: "inventory_event_reports",
+  inventoryResolved: "inventory_resolved_reports",
+};
+
+const partsSync = {
+  enabled: false,
+  idsBySku: new Map(),
+};
+
+function loadStoredList(key){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){
+    console.error("Storage parse error", e);
+    return [];
+  }
+}
+function saveStoredList(key, items){
+  localStorage.setItem(key, JSON.stringify(items));
+}
+
+function mapSupabaseProduct(product){
+  return {
+    sku: product.sku || "",
+    name: product.name || "",
+    desc: product.description || "",
+    reorderPoint: n2(product.minimum_qty ?? product.min_qty ?? 0),
+    category: product.category || "",
+    image: product.image_url || "",
+    oos: product.oos || false,
+  };
+}
+
+async function hydratePartsFromSupabase(){
+  const { supabaseUrl, supabaseAnonKey, orgId } = getConfig();
+  if(!supabaseUrl || !supabaseAnonKey || !orgId){
+    partsSync.enabled = false;
+    return;
+  }
+  try{
+    const products = await listProducts();
+    const next = {};
+    partsSync.idsBySku = new Map();
+    products.forEach((product)=>{
+      if(!product?.sku) return;
+      next[product.sku] = mapSupabaseProduct(product);
+      partsSync.idsBySku.set(product.sku, product.id);
+    });
+    STATE.products = next;
+    partsSync.enabled = true;
+    saveState();
+  }catch(e){
+    console.error("Supabase product load failed", e);
+    partsSync.enabled = false;
+  }
+}
+
+async function syncProductToSupabase(sku, payload){
+  if(!partsSync.enabled) return null;
+  const existingId = partsSync.idsBySku.get(sku);
+  const supabasePayload = {
+    sku,
+    name: payload.name || "",
+    description: payload.desc || "",
+    category: payload.category || "",
+    minimum_qty: n2(payload.reorderPoint),
+  };
+  if(existingId){
+    const updated = await updatePart(existingId, supabasePayload);
+    partsSync.idsBySku.set(sku, updated.id);
+    return updated;
+  }
+  const created = await createPart(supabasePayload);
+  partsSync.idsBySku.set(sku, created.id);
+  return created;
+}
+
+async function deleteProductFromSupabase(sku){
+  if(!partsSync.enabled) return;
+  const existingId = partsSync.idsBySku.get(sku);
+  if(!existingId) return;
+  await deletePart(existingId);
+  partsSync.idsBySku.delete(sku);
+}
 
 /* ---------- Small utils (kept style-friendly) ---------- */
 function structuredCloneSafe(obj){ return JSON.parse(JSON.stringify(obj)); }
@@ -1256,7 +1350,7 @@ function openNewProduct(binId){
   `);
   setTimeout(()=>document.getElementById("pSku")?.focus(), 50);
 }
-function saveNewProductAndAssign(binId){
+async function saveNewProductAndAssign(binId){
   const sku = (document.getElementById("pSku")?.value || "").trim();
   const name = (document.getElementById("pName")?.value || "").trim();
   const desc = (document.getElementById("pDesc")?.value || "").trim();
@@ -1266,9 +1360,16 @@ function saveNewProductAndAssign(binId){
 
   if(!sku){ toast("SKU is required"); return; }
   if(STATE.products[sku]){ toast("SKU already exists"); return; }
-  STATE.products[sku] = { sku, name, desc, reorderPoint, category, image, oos:false };
+  const payload = { sku, name, desc, reorderPoint, category, image, oos:false };
+  STATE.products[sku] = payload;
   STATE.binAssignments[binId] = sku;
   saveState();
+  try{
+    await syncProductToSupabase(sku, payload);
+  }catch(e){
+    console.error("Supabase sync failed", e);
+    toast("Saved locally; sync failed.");
+  }
   toast("Product saved");
   openBin(binId);
 }
@@ -1426,6 +1527,27 @@ function pauseInventory(){
   toast("Paused. You can resume anytime.");
   go("map");
 }
+function recordInventoryEvent(sessionId){
+  const session = STATE.inventory.sessions.find(s=>s.id===sessionId);
+  if(!session) return;
+  const counts = (STATE.inventory.counts?.[sessionId] || []).map((item)=> ({
+    ...item,
+    name: item.name || STATE.products?.[item.sku]?.name || "",
+  }));
+  const event = {
+    id: sessionId,
+    startedAt: session.startedAt || "",
+    endedAt: session.endedAt || "",
+    counts,
+  };
+  const events = loadStoredList(STORAGE_KEYS.inventoryEvents);
+  const existingIndex = events.findIndex((entry)=>entry.id===sessionId);
+  if(existingIndex >= 0){
+    events.splice(existingIndex, 1);
+  }
+  events.unshift(event);
+  saveStoredList(STORAGE_KEYS.inventoryEvents, events);
+}
 function finishInventory(){
   const prog = STATE.inventory.progress;
   if(!prog) return;
@@ -1433,6 +1555,7 @@ function finishInventory(){
   if(ses) ses.endedAt = new Date().toISOString();
   STATE.inventory.progress = null;
   saveState();
+  recordInventoryEvent(prog.sessionId);
   toast("Inventory complete");
   go("map");
 }
@@ -1566,8 +1689,9 @@ function invNext(){
   const physicalQty = n2(document.getElementById("physicalCount")?.value);
   const expectedQty = n2(STATE.binQty[binId]);
   const sku = STATE.binAssignments[binId] || "";
+  const prod = sku ? productBySku(sku) : null;
 
-  const rec = { binId, sku, expectedQty, physicalQty, at: new Date().toISOString() };
+  const rec = {binId, sku, name: prod?.name || "", expectedQty, physicalQty, at: new Date().toISOString() };
   (STATE.inventory.counts[prog.sessionId] = STATE.inventory.counts[prog.sessionId] || []).push(rec);
 
   // Optional: also update live qty to physical (common inventory behavior)
@@ -1665,7 +1789,7 @@ function createProduct(){
     </div>
   `);
 }
-function saveSetupProduct(){
+async function saveSetupProduct(){
   const sku = (document.getElementById("spSku")?.value||"").trim();
   const name = (document.getElementById("spName")?.value||"").trim();
   const desc = (document.getElementById("spDesc")?.value||"").trim();
@@ -1673,10 +1797,17 @@ function saveSetupProduct(){
   const category = (document.getElementById("spCat")?.value||"").trim();
   const image = (document.getElementById("spImg")?.value||"").trim();
   if(!sku){ toast("SKU required"); return; }
-  STATE.products[sku] = { sku, name, desc, reorderPoint, category, image, oos:false };
+ const payload = {skku, name, desc, reorderPoint, category, image, oos:false };
+ state.products[sku] = payload;
   saveState();
   closeModal();
   render();
+  try {
+    await syncProductToSupabase(sku, payload);
+  }catch(e){
+    console.error("Supabase sync failed.", e);
+    toast("Saved locally; sync failed.");
+  }
 }
 function editProduct(sku){
   const p = productBySku(sku);
@@ -1696,13 +1827,14 @@ function editProduct(sku){
       </div>
       <div class="muted">Photo</div><input class="input" id="epImg" value="${esc(p.image||"")}" />
       <div class="row space" style="margin-top:12px">
+        <button class="btn danger" onclick="deleteSetupProduct('${esc(sku)}')">Delete</button>
         <button class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" onclick="saveEditProduct('${esc(sku)}')">Save</button>
       </div>
     </div>
   `);
 }
-function saveEditProduct(sku){
+async function saveEditProduct(sku){
   const p = productBySku(sku);
   if(!p) return;
   p.name = (document.getElementById("epName")?.value||"").trim();
@@ -1713,6 +1845,26 @@ function saveEditProduct(sku){
   saveState();
   closeModal();
   render();
+  try{
+    await syncProductToSupabase(sku, p);
+  }catch(e){
+    console.error("Supabase sync failed", e);
+    toast("Saved locally; sync failed.");
+  }
+}
+
+async function deleteSetupProduct(sku){
+  if(!confirm("Delete this product?")) return;
+  delete STATE.products[sku];
+  saveState();
+  closeModal();
+  render();
+  try{
+    await deleteProductFromSupabase(sku);
+  }catch(e){
+    console.error("Supabase delete failed", e);
+    toast("Deleted locally; sync failed.");
+  }
 }
 
 function viewReport(){
@@ -1764,10 +1916,25 @@ document.addEventListener("keydown", (e)=>{
 });
 
 /* ---------- Boot ---------- */
-(function boot(){
+(async function boot(){
   // if no aisles, seed a couple to make it feel alive (optional)
   if(!STATE.aisles.length){
     // keep empty by default; user can add
+  }
+  await hydratePartsFromSupabase();
+  const params = new URLSearchParams(window.location.search);
+  if(params.get("startInventory") === "1"){
+    if(STATE.inventory?.progress){
+      go("inventory");
+    }else{
+      startInventory();
+    }
+    return;
+  }
+  const route = params.get("route");
+  if(route){
+    go(route);
+    return;
   }
   render();
 })();

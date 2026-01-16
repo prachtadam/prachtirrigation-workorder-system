@@ -62,6 +62,12 @@ const viewContainer = document.getElementById('view-container');
 const viewActions = document.getElementById('view-actions');
 const toast = document.getElementById('toast');
 
+const STORAGE_KEYS = {
+  timeStatus: 'time_status_events',
+  inventoryEvents: 'inventory_event_reports',
+  inventoryResolved: 'inventory_resolved_reports',
+};
+
 const state = {
   boot: null,
   currentView: 'job-board',
@@ -448,7 +454,7 @@ async function renderJobMap(mapPanel, jobs, filterId) {
       mapState.map = map;
 
       window.L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery?MapServer/tile/{z}/{y}/{x}',
+         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         {
           attribution: 'Tiles @ Esri',
           maxZoom: 19,
@@ -3423,6 +3429,278 @@ async function renderTruckListView(truck, listType) {
   viewContainer.innerHTML = '';
   viewContainer.appendChild(container);
 }
+function loadStoredList(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch (error) {
+    console.error('Storage parse error', error);
+    return [];
+  }
+}
+
+function saveStoredList(key, items) {
+  localStorage.setItem(key, JSON.stringify(items));
+}
+
+function formatDateInput(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatElapsed(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours) return `${hours}h ${remainder}m`;
+  return `${remainder}m`;
+}
+
+function formatDateTime(value) {
+  if (!value) return '--';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '--' : date.toLocaleString();
+}
+
+function filterEventsByDate(events, range) {
+  if (!range?.start && !range?.end) return events;
+  const start = range.start ? new Date(range.start).getTime() : null;
+  const end = range.end ? new Date(range.end).getTime() : null;
+  return events.filter((event) => {
+    const startedAt = new Date(event.startedAt).getTime();
+    if (Number.isNaN(startedAt)) return false;
+    if (start && startedAt < start) return false;
+    if (end && startedAt > end) return false;
+    return true;
+  });
+}
+
+async function renderReports() {
+  viewTitle.textContent = 'Reports';
+  viewSubtitle.textContent = 'Time status and inventory audit summaries.';
+  viewActions.innerHTML = '';
+
+  const container = document.createElement('div');
+  container.className = 'section-stack';
+
+  const timeStatusCard = document.createElement('div');
+  timeStatusCard.className = 'card section-stack';
+  timeStatusCard.innerHTML = '<h3>Time Status</h3>';
+
+  const events = loadStoredList(STORAGE_KEYS.timeStatus);
+  const users = (state.boot?.users || []).slice().sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+  const helpers = Array.from(new Set(events.flatMap((event) => event.helpers || []))).sort();
+  const statuses = Array.from(new Set(events.map((event) => event.status || '').filter(Boolean))).sort();
+
+  const techSelect = document.createElement('select');
+  techSelect.innerHTML = `<option value="">All Techs</option>${users.map((user) => `<option value="${user.id}">${escapeHtml(user.full_name || 'Tech')}</option>`).join('')}`;
+  const helperSelect = document.createElement('select');
+  helperSelect.innerHTML = `<option value="">All Helpers</option>${helpers.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+  const statusSelect = document.createElement('select');
+  statusSelect.innerHTML = `<option value="">All Statuses</option>${statuses.map((name) => `<option value="${escapeHtml(name)}">${statusLabel(name)}</option>`).join('')}`;
+
+  const rangeSelect = document.createElement('select');
+  rangeSelect.innerHTML = `
+    <option value="ytd">Year-to-date</option>
+    <option value="custom">Custom range</option>
+  `;
+
+  const startInput = document.createElement('input');
+  startInput.type = 'date';
+  const endInput = document.createElement('input');
+  endInput.type = 'date';
+
+  const now = new Date();
+  startInput.value = formatDateInput(new Date(now.getFullYear(), 0, 1));
+  endInput.value = formatDateInput(now);
+
+  const timeResults = document.createElement('div');
+  timeResults.className = 'section-stack';
+
+  const updateTimeStatusResults = () => {
+    const rangeType = rangeSelect.value;
+    const range = rangeType === 'custom'
+      ? { start: startInput.value, end: endInput.value }
+      : { start: new Date(now.getFullYear(), 0, 1).toISOString(), end: now.toISOString() };
+
+    const filtered = filterEventsByDate(events, range).filter((event) => {
+      if (techSelect.value && event.techId !== techSelect.value) return false;
+      if (helperSelect.value && !(event.helpers || []).includes(helperSelect.value)) return false;
+      if (statusSelect.value && event.status !== statusSelect.value) return false;
+      return true;
+    });
+
+    const totals = filtered.reduce((acc, event) => {
+      const start = new Date(event.startedAt).getTime();
+      const end = new Date(event.endedAt || Date.now()).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end)) return acc;
+      const seconds = Math.max(0, Math.floor((end - start) / 1000));
+      const key = event.status || 'unknown';
+      acc[key] = (acc[key] || 0) + seconds;
+      return acc;
+    }, {});
+
+    const summary = Object.entries(totals)
+      .sort((a, b) => b[1] - a[1])
+      .map(([status, totalSeconds]) => `
+        <div class="pill">
+          <div>
+            <strong>${statusLabel(status)}</strong>
+            <div class="muted">Total time</div>
+          </div>
+          <span class="badge">${formatElapsed(totalSeconds)}</span>
+        </div>
+      `)
+      .join('');
+
+    timeResults.innerHTML = summary || '<div class="muted">No time status entries for this filter.</div>';
+  };
+
+  [techSelect, helperSelect, statusSelect, rangeSelect, startInput, endInput].forEach((node) => {
+    node.addEventListener('change', updateTimeStatusResults);
+  });
+
+  const filterRow = document.createElement('div');
+  filterRow.className = 'form-grid';
+  const fieldWrap = (labelText, inputEl) => {
+    const wrap = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    wrap.append(label, inputEl);
+    return wrap;
+  };
+  filterRow.append(
+    fieldWrap('Tech', techSelect),
+    fieldWrap('Helper', helperSelect),
+    fieldWrap('Status', statusSelect),
+    fieldWrap('Date Range', rangeSelect),
+  );
+
+  const rangeRow = document.createElement('div');
+  rangeRow.className = 'form-grid';
+  rangeRow.append(fieldWrap('Start', startInput), fieldWrap('End', endInput));
+
+  timeStatusCard.append(filterRow, rangeRow, timeResults);
+  container.appendChild(timeStatusCard);
+  updateTimeStatusResults();
+
+  const inventoryCard = document.createElement('div');
+  inventoryCard.className = 'card section-stack';
+  inventoryCard.innerHTML = '<h3>Inventory Event</h3>';
+  const inventoryEvents = loadStoredList(STORAGE_KEYS.inventoryEvents);
+  const inventoryResolved = loadStoredList(STORAGE_KEYS.inventoryResolved);
+
+  const inventoryList = document.createElement('div');
+  inventoryList.className = 'section-stack';
+
+  if (!inventoryEvents.length) {
+    inventoryList.innerHTML = '<div class="muted">No inventory events yet.</div>';
+  } else {
+    inventoryEvents.forEach((event) => {
+      const eventBlock = document.createElement('div');
+      eventBlock.className = 'card';
+      const header = document.createElement('div');
+      header.className = 'row space';
+      header.innerHTML = `
+        <div>
+          <strong>Inventory Event</strong>
+          <div class="muted">${formatDateTime(event.endedAt || event.startedAt)}</div>
+        </div>
+        <span class="badge">${event.counts?.length || 0} items</span>
+      `;
+      eventBlock.appendChild(header);
+      const list = document.createElement('div');
+      list.className = 'section-stack';
+      (event.counts || []).forEach((count) => {
+        if (count.resolvedAt) return;
+        const row = document.createElement('label');
+        row.className = 'pill';
+        row.innerHTML = `
+          <div>
+            <strong>${escapeHtml(count.name || count.sku || 'Part')}</strong>
+            <div class="muted">Physical: ${count.physicalQty ?? 0} • Counted ${formatDateTime(count.at)}</div>
+          </div>
+          <span class="badge">Resolve <input type="checkbox" data-session="${event.id}" data-bin="${count.binId}" /></span>
+        `;
+        list.appendChild(row);
+      });
+      eventBlock.appendChild(list);
+      inventoryList.appendChild(eventBlock);
+    });
+  }
+
+  inventoryCard.appendChild(inventoryList);
+  container.appendChild(inventoryCard);
+
+  const resolvedCard = document.createElement('div');
+  resolvedCard.className = 'card section-stack';
+  resolvedCard.innerHTML = '<h3>Inventory Resolved</h3>';
+
+  const exportResolvedBtn = document.createElement('button');
+  exportResolvedBtn.className = 'pill';
+  exportResolvedBtn.textContent = 'Export CSV';
+  exportResolvedBtn.addEventListener('click', () => {
+    exportCsv(inventoryResolved, 'inventory-resolved', [
+      { key: 'sku' },
+      { key: 'name' },
+      { key: 'physicalQty' },
+      { key: 'countedAt' },
+      { key: 'resolvedAt' },
+    ]);
+  });
+  resolvedCard.appendChild(exportResolvedBtn);
+
+  const resolvedList = document.createElement('div');
+  resolvedList.className = 'section-stack';
+  if (!inventoryResolved.length) {
+    resolvedList.innerHTML = '<div class="muted">No resolved inventory items yet.</div>';
+  } else {
+    inventoryResolved.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'pill';
+      row.innerHTML = `
+        <div>
+          <strong>${escapeHtml(item.name || item.sku || 'Part')}</strong>
+          <div class="muted">Counted ${formatDateTime(item.countedAt)} • Resolved ${formatDateTime(item.resolvedAt)}</div>
+        </div>
+        <span class="badge">${item.physicalQty ?? 0}</span>
+      `;
+      resolvedList.appendChild(row);
+    });
+  }
+  resolvedCard.appendChild(resolvedList);
+  container.appendChild(resolvedCard);
+
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(container);
+
+  inventoryList.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    checkbox.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!target.checked) return;
+      const sessionId = target.dataset.session;
+      const binId = target.dataset.bin;
+      const eventIndex = inventoryEvents.findIndex((evt) => evt.id === sessionId);
+      if (eventIndex < 0) return;
+      const eventData = inventoryEvents[eventIndex];
+      const item = (eventData.counts || []).find((count) => count.binId === binId);
+      if (!item) return;
+      item.resolvedAt = new Date().toISOString();
+      const resolvedEntry = {
+        id: `${sessionId}-${binId}-${Date.now()}`,
+        sku: item.sku,
+        name: item.name,
+        physicalQty: item.physicalQty,
+        countedAt: item.at,
+        resolvedAt: item.resolvedAt,
+        sessionId,
+      };
+      inventoryResolved.unshift(resolvedEntry);
+      saveStoredList(STORAGE_KEYS.inventoryResolved, inventoryResolved);
+      saveStoredList(STORAGE_KEYS.inventoryEvents, inventoryEvents);
+      renderReports();
+    });
+  });
+}
 
 const viewHandlers = {
   'job-board': renderJobBoard,
@@ -3463,6 +3741,7 @@ const viewHandlers = {
   requests: renderRequests,
   'out-of-stock': renderOutOfStock,
   receipts: renderReceipts,
+  reports: renderReports,
   settings: renderSettings,
 };
 
@@ -3563,6 +3842,15 @@ function bindCreateJobShortcut() {
   });
 }
 
+
+function bindInventoryMapShortcut() {
+  const btn = document.getElementById('open-inventory-map');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    window.open('../inventory-app/inventory.html', '_blank', 'noopener');
+  });
+}
+
 function bindCreateJobModal() {
   const modal = document.getElementById('create-job-modal');
   const closeBtn = document.getElementById('close-create-job');
@@ -3634,6 +3922,7 @@ bindNav();
 bindHamburgerMenuUI();
 bindQuickViews();
 bindCreateJobShortcut();
+bindInventoryMapShortcut();
 bindCreateJobModal();
 setView('job-board');
 updateQuickViewCounts();
