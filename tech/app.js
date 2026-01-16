@@ -237,15 +237,15 @@ function renderHome() {
   container.appendChild(renderHeader());
 
   const main = document.createElement('div');
-  main.className = 'main list';
+  main.className = 'main list home-main';
   main.innerHTML = `
-    <button class="pill large" data-action="create-job">Create Job</button>
-    <button class="pill large" data-action="open-jobs">Open Jobs <span class="badge" id="open-count">0</span></button>
-    <button class="pill large" data-action="restock">Restock <span class="badge" id="restock-count">0</span></button>
-    <button class="pill large" data-action="refuel">Re-fuel</button>
-    <button class="pill large" data-action="requests">Requests</button>
+   <button class="pill map-view" data-action="map-view">Map View</button>
+    <button class="pill large create-job" data-action="create-job">Create Job</button>
+    <button class="pill large open-jobs" data-action="open-jobs">Open Jobs <span class="badge" id="open-count">0</span></button>
+    <button class="pill large restock" data-action="restock">Restock <span class="badge" id="restock-count">0</span></button>
+    <button class="pill large refuel" data-action="refuel">Re-fuel</button>
+    <button class="pill large requests" data-action="requests">Requests</button>
     <button class="pill large" data-action="receipts">Receipts</button>
-    <button class="pill large" data-action="map-view">Map View</button>
   `;
   container.appendChild(main);
   screenContainer(container);
