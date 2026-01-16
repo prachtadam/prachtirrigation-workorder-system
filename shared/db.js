@@ -438,7 +438,8 @@ export async function listRequestHistory(userId) {
 }
 
 export async function createRequest(payload) { return insertTable('requests', payload); }
-
+export async function updateRequest(id, payload) { return updateTable('requests', id, payload); }
+export async function deleteRequest(id) { return deleteTable('requests', id); }
 export async function resolveRequest(requestId) {
   const { error } = await getClient().rpc('resolve_request', { p_request_id: requestId });
   handleError(error, 'Resolve request');
@@ -456,7 +457,7 @@ export async function listReceipts() {
 }
 export async function createReceipt(payload) { return insertTable('receipts', payload); }
 export async function deleteReceipt(id) { return deleteTable('receipts', id); }
-
+export async function updateReceipt(id, payload) { return updateTable('receipts', id, payload); }
 export async function listOutOfStock() {
   const orgId = requireOrgId();
   const { data, error } = await getClient()

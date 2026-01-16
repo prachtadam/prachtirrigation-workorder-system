@@ -426,6 +426,58 @@ transform: translateY(1px) scale(0.99);
   gap: 8px;
 }
 
+.receipt-items {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.receipt-item-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 0.9fr)) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.receipt-item-row label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  display: block;
+}
+
+.receipt-item-field {
+  display: grid;
+  gap: 4px;
+}
+
+.receipt-item-total {
+  min-width: 92px;
+}
+
+.receipt-total-value {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 800;
+  text-align: right;
+}
+
+.receipt-summary {
+  margin-top: 12px;
+}
+
+.pill.danger {
+  background: rgba(235, 87, 87, 0.2);
+  border-color: rgba(235, 87, 87, 0.4);
+  color: #fecaca;
+}
+
 button.action {
   border: none;
   border-radius: 14px;
@@ -692,6 +744,9 @@ textarea {
 .map-card {
   display: grid;
   gap: 12px;
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
 }
 
 .map-canvas {
@@ -701,6 +756,8 @@ textarea {
   border-radius: 18px;
   overflow: hidden;
  border: 1px solid rgba(255, 255, 255, 0.08);
+ position: relative;
+ z-index: 0;
 }
 
 .map-overlay {
@@ -747,5 +804,19 @@ textarea {
 @media (min-width: 720px) {
   .main {
   width: 100%
+  }
+}
+
+@media (max-width: 640px) {
+  .receipt-item-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .receipt-item-row .receipt-item-field {
+    width: 100%;
+  }
+
+  .receipt-item-row .pill {
+    grid-column: span 2;
   }
 }

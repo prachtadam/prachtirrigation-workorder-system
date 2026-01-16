@@ -1262,6 +1262,22 @@ button.action.wide{
   gap: 10px;
 }
 
+.list-row .row-main{
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.list-row .row-title{
+  font-weight: 950;
+}
+
+.list-row .row-sub{
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .pill-x{
   border: 1px solid rgba(255,255,255,.12);
   background: rgba(239,68,68,.2);

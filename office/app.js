@@ -41,12 +41,14 @@ import {
   updateTruckInventory,
   deleteTruckInventory,
   listAllRequests,
-  resolveRequest,
   listRequestHistory,
   listOutOfStock,
   deleteOutOfStock,
   listReceipts,
+  updateReceipt,
   deleteReceipt,
+  updateRequest,
+  deleteRequest,
   markJobInvoiced,
   cancelJob,
   updateJob,
@@ -1432,7 +1434,7 @@ async function renderRequests() {
     listAllRequests(),
     listRequestHistory(),
   ]);
-
+const activeRequests = requests.filter((req) => req.status !== 'approved');
   const layout = document.createElement('div');
   layout.className = 'grid-two';
 
@@ -1440,30 +1442,94 @@ async function renderRequests() {
   activeCard.className = 'card section-stack';
   activeCard.innerHTML = '<h3>Active Requests</h3>';
 
-  requests.forEach((req) => {
-    const pill = document.createElement('button');
-    pill.className = 'pill';
-    pill.innerHTML = `
-      <div>
-        <strong>${req.request_type}</strong>
-        <div class="muted">${req.users?.full_name || 'Tech'}</div>
-        <div>${req.description}</div>
+ 
+   const formatMetadataRows = (metadata = {}) => {
+    const safeMetadata = metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+    const entries = Object.entries(safeMetadata).filter(([, value]) => value !== '' && value !== null && value !== undefined);
+    if (!entries.length) return '<div class="muted">No additional details.</div>';
+    return entries.map(([key, value]) => `
+      <div class="pill">
+        <div>
+          <strong>${escapeHtml(prettyLabel(key))}</strong>
+          <div class="muted">${escapeHtml(String(value))}</div>
+        </div>
       </div>
-      <span class="badge">Resolve</span>
+    `).join('');
+  };
+
+  activeRequests.forEach((req) => {
+    const pill = document.createElement('button');
+    pill.className = 'pill list-row';
+    pill.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(req.request_type)}</div>
+        <div class="row-sub muted">${escapeHtml(req.users?.full_name || 'Tech')} • Truck ${escapeHtml(req.truck_id || '--')}</div>
+        <div class="row-sub">${escapeHtml(req.description)}</div>
+      </div>
+      <div class="row-meta">
+        <span class="badge">Review</span>
+      </div>
     `;
     pill.addEventListener('click', async () => {
-      try {
-        await resolveRequest(req.id);
-        showToast('Request resolved and archived.');
-        await renderRequests();
-      } catch (error) {
-        showToast(error.message);
-      }
+     const body = document.createElement('div');
+      body.className = 'section-stack';
+      body.innerHTML = `
+        <div class="pill">
+          <div>
+            <strong>${escapeHtml(req.request_type)}</strong>
+            <div class="muted">${escapeHtml(req.users?.full_name || 'Tech')}</div>
+            <div class="muted">Truck: ${escapeHtml(req.truck_id || '--')}</div>
+          </div>
+          <span class="badge">${escapeHtml(req.status || 'Pending')}</span>
+        </div>
+        <div class="card">
+          <strong>Description</strong>
+          <div class="muted">${escapeHtml(req.description || '')}</div>
+        </div>
+        <div class="card">
+          <strong>Details</strong>
+          <div class="section-stack">${formatMetadataRows(req.metadata)}</div>
+        </div>
+      `;
+      const actions = document.createElement('div');
+      actions.className = 'modal-foot';
+      const denyBtn = document.createElement('button');
+      denyBtn.className = 'danger';
+      denyBtn.type = 'button';
+      denyBtn.textContent = 'Deny';
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'action';
+      approveBtn.type = 'button';
+      approveBtn.textContent = 'Approve';
+      actions.append(denyBtn, approveBtn);
+      body.appendChild(actions);
+      const { close } = openModalSimple({ title: 'Request Review', bodyEl: body });
+      approveBtn.addEventListener('click', async () => {
+        try {
+          await updateRequest(req.id, { status: 'approved' });
+          showToast('Request approved.');
+          close();
+          await renderRequests();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+      denyBtn.addEventListener('click', async () => {
+        if (!confirm('Deny and delete this request?')) return;
+        try {
+          await deleteRequest(req.id);
+          showToast('Request denied and removed.');
+          close();
+          await renderRequests();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
     });
     activeCard.appendChild(pill);
   });
 
-  if (!requests.length) {
+  if (!activeRequests.length) {
     activeCard.innerHTML += '<p>No active requests.</p>';
   }
 
@@ -1537,44 +1603,105 @@ async function renderOutOfStock() {
 
 async function renderReceipts() {
   viewTitle.textContent = 'Receipts';
-  viewSubtitle.textContent = 'Archived receipts and 2-step removal.';
+  viewSubtitle.textContent = 'Review and approve tech receipts.';
   viewActions.innerHTML = '';
 
   const receipts = await listReceipts();
+  const pendingReceipts = receipts.filter((receipt) => !receipt.status || receipt.status === 'pending');
   const container = document.createElement('div');
-  container.className = 'card section-stack';
+  container.className = 'card list';
 
-  receipts.forEach((receipt) => {
-    const pill = document.createElement('div');
-    pill.className = 'pill';
+ const renderItemSummary = (receipt) => {
+    if (Array.isArray(receipt.items) && receipt.items.length) {
+      return receipt.items
+        .map((item) => `${item.description} (x${item.qty || 0})`)
+        .join(' • ');
+    }
+    return receipt.description || '';
+  };
+
+  pendingReceipts.forEach((receipt) => {
+    const pill = document.createElement('button');
+    pill.className = 'pill list-row';
     pill.innerHTML = `
-      <div>
-        <strong>${receipt.receipt_type}</strong>
-        <div class="muted">${new Date(receipt.created_at).toLocaleString()}</div>
-        <div>${receipt.description || ''}</div>
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(receipt.receipt_type || 'Receipt')}</div>
+        <div class="row-sub muted">${new Date(receipt.created_at).toLocaleString()} • Truck ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
+        <div class="row-sub">${escapeHtml(renderItemSummary(receipt))}</div>
       </div>
-      <button class="action danger" data-step="1">Remove</button>
+      <div class="row-meta">
+        <span class="badge">${receipt.total_cost ? `$${Number(receipt.total_cost).toFixed(2)}` : 'Review'}</span>
+      </div>
     `;
-    const removeBtn = pill.querySelector('button');
-    removeBtn.addEventListener('click', async () => {
-      if (removeBtn.dataset.step === '1') {
-        removeBtn.textContent = 'Confirm Remove';
-        removeBtn.dataset.step = '2';
-        return;
-      }
-      try {
-        await deleteReceipt(receipt.id);
-        showToast('Receipt removed.');
-        await renderReceipts();
-      } catch (error) {
-        showToast(error.message);
-      }
+      pill.addEventListener('click', () => {
+      const body = document.createElement('div');
+      body.className = 'section-stack';
+      const items = Array.isArray(receipt.items) ? receipt.items : [];
+      const itemList = items.length
+        ? items.map((item) => `
+            <div class="pill">
+              <div>
+                <strong>${escapeHtml(item.description || 'Item')}</strong>
+                <div class="muted">Qty: ${item.qty ?? 0} • Price: $${Number(item.price || 0).toFixed(2)}</div>
+              </div>
+              <span class="badge">$${Number(item.total || 0).toFixed(2)}</span>
+            </div>
+          `).join('')
+        : `<div class="muted">${escapeHtml(receipt.description || 'No line items provided.')}</div>`;
+      body.innerHTML = `
+        <div class="pill">
+          <div>
+            <strong>${escapeHtml(receipt.receipt_type || 'Receipt')}</strong>
+            <div class="muted">Tech: ${escapeHtml(receipt.users?.full_name || receipt.tech_id || 'Tech')}</div>
+            <div class="muted">Truck: ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
+          </div>
+          <span class="badge">${receipt.total_cost ? `$${Number(receipt.total_cost).toFixed(2)}` : 'Total N/A'}</span>
+        </div>
+        <div class="card section-stack">
+          <strong>Items</strong>
+          ${itemList}
+        </div>
+      `;
+      const actions = document.createElement('div');
+      actions.className = 'modal-foot';
+      const denyBtn = document.createElement('button');
+      denyBtn.className = 'danger';
+      denyBtn.type = 'button';
+      denyBtn.textContent = 'Deny';
+      const approveBtn = document.createElement('button');
+      approveBtn.className = 'action';
+      approveBtn.type = 'button';
+      approveBtn.textContent = 'Approve';
+      actions.append(denyBtn, approveBtn);
+      body.appendChild(actions);
+      const { close } = openModalSimple({ title: 'Receipt Review', bodyEl: body });
+      approveBtn.addEventListener('click', async () => {
+        try {
+          await updateReceipt(receipt.id, { status: 'approved' });
+          showToast('Receipt approved.');
+          close();
+          await renderReceipts();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
+      denyBtn.addEventListener('click', async () => {
+        if (!confirm('Deny this receipt?')) return;
+        try {
+          await updateReceipt(receipt.id, { status: 'denied' });
+          showToast('Receipt denied.');
+          close();
+          await renderReceipts();
+        } catch (error) {
+          showToast(error.message);
+        }
+      });
     });
     container.appendChild(pill);
   });
 
-  if (!receipts.length) {
-    container.innerHTML += '<p>No receipts archived.</p>';
+ if (!pendingReceipts.length) {
+    container.innerHTML += '<p>No receipts awaiting review.</p>';
   }
 
   viewContainer.innerHTML = '';
@@ -3479,6 +3606,10 @@ async function renderReports() {
   viewSubtitle.textContent = 'Time status and inventory audit summaries.';
   viewActions.innerHTML = '';
 
+  const receipts = await listReceipts();
+  const approvedReceipts = receipts.filter((receipt) => receipt.status === 'approved');
+  const deniedReceipts = receipts.filter((receipt) => receipt.status === 'denied');
+
   const container = document.createElement('div');
   container.className = 'section-stack';
 
@@ -3670,6 +3801,47 @@ async function renderReports() {
   resolvedCard.appendChild(resolvedList);
   container.appendChild(resolvedCard);
 
+   const receiptCard = document.createElement('div');
+  receiptCard.className = 'card section-stack';
+  receiptCard.innerHTML = '<h3>Receipt Decisions</h3>';
+  const receiptLists = document.createElement('div');
+  receiptLists.className = 'section-stack';
+  const renderReceiptList = (title, items, badgeClass) => {
+    const block = document.createElement('div');
+    block.className = 'section-stack';
+    const heading = document.createElement('div');
+    heading.className = 'section-title';
+    heading.textContent = title;
+    block.appendChild(heading);
+    if (!items.length) {
+      block.innerHTML += '<div class="muted">No receipts yet.</div>';
+      return block;
+    }
+    items.forEach((receipt) => {
+      const row = document.createElement('div');
+      row.className = 'pill list-row';
+      const total = receipt.total_cost ? `$${Number(receipt.total_cost).toFixed(2)}` : '--';
+      row.innerHTML = `
+        <div class="row-main">
+          <div class="row-title">${escapeHtml(receipt.receipt_type || 'Receipt')}</div>
+          <div class="row-sub muted">${new Date(receipt.created_at).toLocaleString()}</div>
+          <div class="row-sub">${escapeHtml(receipt.users?.full_name || receipt.tech_id || 'Tech')} • ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
+        </div>
+        <div class="row-meta">
+          <span class="badge ${badgeClass}">${total}</span>
+        </div>
+      `;
+      block.appendChild(row);
+    });
+    return block;
+  };
+
+  receiptLists.append(
+    renderReceiptList('Approved', approvedReceipts, 'success'),
+    renderReceiptList('Denied', deniedReceipts, 'danger'),
+  );
+  receiptCard.appendChild(receiptLists);
+  container.appendChild(receiptCard);
   viewContainer.innerHTML = '';
   viewContainer.appendChild(container);
 

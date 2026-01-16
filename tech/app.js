@@ -26,6 +26,7 @@ import {
   listRequests,
   createRequest,
   createReceipt,
+  updateUser,
   signIn,
   signOut,
   getSession,
@@ -52,6 +53,105 @@ const mapState = {
   locationMarker: null,
 };
 
+
+const STORAGE_KEYS = {
+  timeStatus: 'time_status_events',
+};
+
+function loadTimeStatusEvents() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.timeStatus);
+    return raw ? JSON.parse(raw) : [];
+  } catch (error) {
+    console.error('Time status storage parse error', error);
+    return [];
+  }
+}
+
+function saveTimeStatusEvents(events) {
+  localStorage.setItem(STORAGE_KEYS.timeStatus, JSON.stringify(events));
+}
+
+function getActiveInShopEvent() {
+  if (!state.tech?.id) return null;
+  const events = loadTimeStatusEvents();
+  return events.find((event) => event.techId === state.tech.id && !event.endedAt && event.status === 'in_shop');
+}
+
+function formatElapsed(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (hours) return `${hours}h ${remainder}m`;
+  return `${remainder}m`;
+}
+
+function updateInShopButton() {
+  const button = document.querySelector('[data-action="in-shop"]');
+  if (!button) return;
+  const event = getActiveInShopEvent();
+  const meta = button.querySelector('.menu-meta');
+  if (!meta) return;
+  if (!event) {
+    meta.textContent = 'Off';
+    return;
+  }
+  const startedAt = new Date(event.startedAt).getTime();
+  const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  meta.textContent = formatElapsed(elapsed);
+}
+
+function startInShopTimer() {
+  if (state.inShopTimerId) return;
+  state.inShopTimerId = setInterval(updateInShopButton, 1000);
+}
+
+function stopInShopTimer() {
+  if (!state.inShopTimerId) return;
+  clearInterval(state.inShopTimerId);
+  state.inShopTimerId = null;
+}
+
+function startInShopStatus() {
+  if (!state.tech?.id) {
+    showToast('Select a tech before starting in-shop.');
+    return;
+  }
+  const events = loadTimeStatusEvents();
+  const active = events.find((event) => event.techId === state.tech.id && !event.endedAt);
+  if (active) {
+    showToast('Tech already has an active status.');
+    return;
+  }
+  const record = {
+    id: `in-shop-${Date.now()}`,
+    status: 'in_shop',
+    techId: state.tech.id,
+    techName: state.tech.full_name || 'Tech',
+    helpers: state.helpers.slice(),
+    startedAt: new Date().toISOString(),
+    endedAt: null,
+  };
+  events.unshift(record);
+  saveTimeStatusEvents(events);
+  startInShopTimer();
+  updateInShopButton();
+  showToast('In-shop status started.');
+}
+
+function endInShopStatus(reason = 'manual') {
+  if (!state.tech?.id) return;
+  const events = loadTimeStatusEvents();
+  const active = events.find((event) => event.techId === state.tech.id && !event.endedAt && event.status === 'in_shop');
+  if (!active) return;
+  active.endedAt = new Date().toISOString();
+  active.endedReason = reason;
+  active.helpers = state.helpers.slice();
+  saveTimeStatusEvents(events);
+  stopInShopTimer();
+  updateInShopButton();
+  showToast('In-shop status ended.');
+}
 function showToast(message) {
   toast.textContent = message;
   toast.hidden = false;
@@ -97,6 +197,12 @@ function screenContainer(content) {
   app.innerHTML = '';
   app.appendChild(content);
 }
+function formatCurrency(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return '$0.00';
+  return `$${amount.toFixed(2)}`;
+}
+
 function createAppLayout({ withHeader = true } = {}) {
   const container = document.createElement('div');
   container.className = 'app';
@@ -299,12 +405,40 @@ function renderDrawer() {
       <div class="sub">Lists • Requests • Receipts • Settings</div>
     </div>
     <div class="menu">
+     <button class="menuBtn" data-action="start-inventory">
+        <div class="menuLeft">
+          <div class="name">Start Inventory</div>
+          <div class="desc">Launch shelf map counting</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
+      <button class="menuBtn" data-action="inshop">
+        <div class="menuLeft">
+          <div class="name">Set Inshop Status</div>
+          <div class="desc">Mark tech as in shop</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
       <button class="menuBtn" data-action="current">
         <div class="menuLeft">
           <div class="name">Current Inventory</div>
           <div class="desc">Parts on this truck</div>
         </div>
         <span class="chev">›</span>
+      </button>
+        <button class="menuBtn" data-action="perform-inventory">
+        <div class="menuLeft">
+          <div class="name">Perform Inventory</div>
+          <div class="desc">Start the inventory count flow</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
+      <button class="menuBtn" data-action="in-shop">
+        <div class="menuLeft">
+          <div class="name">In-shop</div>
+          <div class="desc">Track shop time status</div>
+        </div>
+        <span class="menu-meta">Off</span>
       </button>
       <button class="menuBtn" data-action="master">
         <div class="menuLeft">
@@ -335,7 +469,22 @@ function renderDrawer() {
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       toggleDrawer(false);
+       if (action === 'start-inventory') return startInventoryInApp();
+      if (action === 'inshop') return setTechInshopStatus();
       if (action === 'current') return renderInventory();
+      if (action === 'perform-inventory') {
+        window.open('../inventory-app/inventory.html?startInventory=1', '_blank', 'noopener');
+        return;
+      }
+      if (action === 'in-shop') {
+        const active = getActiveInShopEvent();
+        if (active) {
+          endInShopStatus('manual');
+        } else {
+          startInShopStatus();
+        }
+        return;
+      }
       if (action === 'master') return renderMasterInventory();
       if (action === 'tools') return renderToolList();
       if (action === 'logout') return handleLogout();
@@ -346,12 +495,41 @@ function renderDrawer() {
   document.body.appendChild(drawer);
 
   state.drawer = { overlay, drawer };
+  updateInShopButton();
+  if (getActiveInShopEvent()) {
+    startInShopTimer();
+  }
 }
 
 function toggleDrawer(show) {
   if (!state.drawer) renderDrawer();
   state.drawer.drawer.classList.toggle('open', show);
   state.drawer.overlay.classList.toggle('show', show);
+  if (show) updateInShopButton();
+}
+
+function startInventoryInApp() {
+  const url = new URL('../inventory-app/inventory.html', window.location.href);
+  url.searchParams.set('startInventory', '1');
+  window.location.href = url.toString();
+}
+
+async function setTechInshopStatus() {
+  if (!state.tech?.id) {
+    showToast('Assign a tech before setting status.');
+    return;
+  }
+  try {
+    await executeOrQueue(
+      'updateUser',
+      { userId: state.tech.id, payload: { status: 'inshop' } },
+      ({ userId, payload }) => updateUser(userId, payload),
+    );
+    state.tech.status = 'inshop';
+    showToast('Tech status set to Inshop.');
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function renderHome() {
@@ -452,6 +630,7 @@ async function handleLogout() {
   } catch (error) {
     console.warn('Sign out failed', error);
   }
+  stopInShopTimer();
   state.tech = null;
   renderLogin();
 }
@@ -467,6 +646,9 @@ async function initializeApp() {
     showToast('User not found in tech list. Ask office to add your user.');
   }
 
+  if (getActiveInShopEvent()) {
+    startInShopTimer();
+  }
   const last = getLastScreen();
   if (last.screen && last.jobId) {
     state.currentJob = await getJob(last.jobId);
@@ -908,7 +1090,7 @@ async function renderTechMap() {
   mapState.map = map;
 
   window.L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery?MapServer/tile/{z}/{y}/{x}',
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     {
       attribution: 'Tiles © Esri',
       maxZoom: 19,
@@ -1050,6 +1232,10 @@ function renderRoutePrompt(job) {
 }
 
 async function takeJob(job) {
+  if (getActiveInShopEvent()) {
+    endInShopStatus('job_taken');
+  }
+  
   await executeOrQueue('setJobStatus', { jobId: job.id, status: JOB_STATUSES.ON_THE_WAY }, ({ jobId, status }) =>
     setJobStatus(jobId, status)
   );
@@ -1561,6 +1747,7 @@ function renderRefuel() {
       gallons: panel.querySelector('#gallons').value,
       price_per_gallon: panel.querySelector('#price').value,
       total_cost: panel.querySelector('#total').value,
+      status: 'pending',
     };
     if (!payload.odometer || !payload.gallons || !payload.price_per_gallon || !payload.total_cost) {
       showToast('All fields required.');
@@ -1597,7 +1784,15 @@ async function renderRequests() {
   requests.forEach((req) => {
     const pill = document.createElement('button');
     pill.className = 'pill';
-    pill.innerHTML = `<div>${req.request_type}</div><span class="badge">${req.description}</span>`;
+   const statusLabel = req.status === 'approved' ? 'Approved' : 'Pending';
+    const statusClass = req.status === 'approved' ? 'success' : '';
+    pill.innerHTML = `
+      <div>
+        <strong>${req.request_type}</strong>
+        <div class="muted">${req.description}</div>
+      </div>
+      <span class="badge ${statusClass}">${statusLabel}</span>
+    `;
     card.appendChild(pill);
   });
   if (!requests.length) card.innerHTML += '<p>No pending requests.</p>';
@@ -1733,6 +1928,7 @@ function renderReceipts() {
  const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
   const receiptOptions = state.boot.receiptTypes.map((type) => `<option value="${type.name}">${type.name}</option>`).join('');
+  const receiptItems = [{ description: '', qty: 1, price: '' }];
   panel.innerHTML = `
     <div class="screenTitle">
       <button class="backBtn" id="receipts-back">←</button>
@@ -1743,23 +1939,128 @@ function renderReceipts() {
       <h3>Add Receipt</h3>
       <label>Receipt Type</label>
       <select id="receipt-type">${receiptOptions}</select>
-      <label>Qty</label>
-      <input id="receipt-qty" type="number" />
-      <label>Description</label>
-      <textarea id="receipt-desc"></textarea>
+      <div class="receipt-items" id="receipt-items"></div>
+      <button class="pill tiny" id="add-receipt-item" type="button">Add Item</button>
+      <label>Notes</label>
+      <textarea id="receipt-desc" placeholder="Optional notes"></textarea>
+      <div class="receipt-summary" id="receipt-summary"></div>
       <div class="actions">
         <button class="action" id="save">Save</button>
         <button class="action secondary" id="cancel">Cancel</button>
       </div>
     </div>
   `;
+   const itemsWrap = panel.querySelector('#receipt-items');
+  const summary = panel.querySelector('#receipt-summary');
+  const receiptTypeSelect = panel.querySelector('#receipt-type');
+
+  const computeItemTotal = (item) => Number(item.qty || 0) * Number(item.price || 0);
+  const computeTotals = () => {
+    const totalCost = receiptItems.reduce((acc, item) => acc + computeItemTotal(item), 0);
+    const totalQty = receiptItems.reduce((acc, item) => acc + Number(item.qty || 0), 0);
+    return { totalCost, totalQty };
+  };
+
+  const updateSummary = () => {
+    const { totalCost, totalQty } = computeTotals();
+    summary.innerHTML = `
+      <div class="pill">
+        <div>
+          <strong>Total for ${receiptTypeSelect.value || 'Receipt'}</strong>
+          <div class="muted">Qty: ${totalQty}</div>
+        </div>
+        <span class="badge">${formatCurrency(totalCost)}</span>
+      </div>
+    `;
+  };
+
+  const renderItems = () => {
+    itemsWrap.innerHTML = '';
+    receiptItems.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.className = 'receipt-item-row';
+      row.innerHTML = `
+        <div class="receipt-item-field">
+          <label>Item</label>
+          <input type="text" value="${item.description}" placeholder="Item description" />
+        </div>
+        <div class="receipt-item-field">
+          <label>Qty</label>
+          <input type="number" min="1" value="${item.qty}" />
+        </div>
+        <div class="receipt-item-field">
+          <label>Price Each</label>
+          <input type="number" min="0" step="0.01" value="${item.price}" />
+        </div>
+        <div class="receipt-item-field receipt-item-total">
+          <label>Total</label>
+          <div class="receipt-total-value">${formatCurrency(computeItemTotal(item))}</div>
+        </div>
+        <button class="pill tiny danger" type="button">Remove</button>
+      `;
+      const [descInput, qtyInput, priceInput] = row.querySelectorAll('input');
+      const totalValue = row.querySelector('.receipt-total-value');
+      const removeBtn = row.querySelector('button');
+      descInput.addEventListener('input', (event) => {
+        item.description = event.target.value;
+      });
+      qtyInput.addEventListener('input', (event) => {
+        item.qty = Number(event.target.value || 0);
+        totalValue.textContent = formatCurrency(computeItemTotal(item));
+        updateSummary();
+      });
+      priceInput.addEventListener('input', (event) => {
+        item.price = Number(event.target.value || 0);
+        totalValue.textContent = formatCurrency(computeItemTotal(item));
+        updateSummary();
+      });
+      removeBtn.addEventListener('click', () => {
+        if (receiptItems.length === 1) return;
+        receiptItems.splice(index, 1);
+        renderItems();
+        updateSummary();
+      });
+      itemsWrap.appendChild(row);
+    });
+  };
+
+  renderItems();
+  updateSummary();
+
+  panel.querySelector('#add-receipt-item').addEventListener('click', () => {
+    receiptItems.push({ description: '', qty: 1, price: '' });
+    renderItems();
+  });
+
+  receiptTypeSelect.addEventListener('change', updateSummary);
   panel.querySelector('#save').addEventListener('click', async () => {
+      const cleanedItems = receiptItems
+      .map((item) => ({
+        description: item.description.trim(),
+        qty: Number(item.qty || 0),
+        price: Number(item.price || 0),
+        total: computeItemTotal(item),
+      }))
+      .filter((item) => item.description);
+    if (!cleanedItems.length) {
+      showToast('Add at least one item.');
+      return;
+    }
+    if (cleanedItems.some((item) => !item.qty || item.qty < 0 || item.price < 0)) {
+      showToast('Enter valid qty and price for each item.');
+      return;
+    }
+    const totalCost = cleanedItems.reduce((acc, item) => acc + item.total, 0);
+    const totalQty = cleanedItems.reduce((acc, item) => acc + item.qty, 0);
     const payload = {
-      receipt_type: panel.querySelector('#receipt-type').value,
-      qty: panel.querySelector('#receipt-qty').value,
-      description: panel.querySelector('#receipt-desc').value,
+      receipt_type: receiptTypeSelect.value,
+      qty: totalQty,
+      description: panel.querySelector('#receipt-desc').value.trim(),
+      items: cleanedItems,
+      total_cost: totalCost,
       truck_id: state.truckId,
       tech_id: state.tech?.id,
+      status: 'pending',
     };
     await executeOrQueue('createReceipt', payload, createReceipt);
     showToast('Receipt saved.');
@@ -1785,6 +2086,7 @@ state.offlineQueueHandlers = {
   outOfStock: (payload) => createOutOfStock(payload),
   createRequest: (payload) => createRequest(payload),
   createReceipt: (payload) => createReceipt(payload),
+  updateUser: ({ userId, payload }) => updateUser(userId, payload),
   upsertInventory: (payload) => upsertTruckInventory(payload),
   generateReports: async ({ jobId }) => {
     const job = await getJob(jobId);
