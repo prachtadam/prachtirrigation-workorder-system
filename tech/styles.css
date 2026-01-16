@@ -65,7 +65,7 @@ textarea {
 
 .titleRow {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 44px 44px 1fr;
   align-items: center;
   gap: 10px;
 }
@@ -114,6 +114,32 @@ textarea {
   min-width: 0;
 }
 
+.truck-selector {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 14px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.truck-label {
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+}
+
+.truck-sub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .titleLink {
   width: 100%;
   text-align: center;
@@ -140,16 +166,6 @@ textarea {
   border: none;
   text-align: center;
   color: var(--text);
-  cursor: pointer;
-}
-
-.techBox {
-  text-align: right;
-  line-height: 1.1;
-  max-width: 46vw;
-  border: none;
-  background: transparent;
-  padding: 0;
   cursor: pointer;
 }
 
@@ -530,7 +546,7 @@ textarea {
   pointer-events: auto;
 }
 
-.helper-modal {
+.selection-modal {
   position: fixed;
   inset: 0;
   display: grid;
@@ -538,7 +554,7 @@ textarea {
   z-index: 70;
 }
 
-.helper-modal .modal-card {
+.selection-modal .modal-card {
   width: min(420px, 92vw);
  background: rgba(2, 6, 23, 0.96);
   border-radius: 18px;
@@ -549,14 +565,25 @@ textarea {
  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
 }
 
-.helper-modal .modal-list {
+.selection-modal .modal-list {
   display: grid;
   gap: 10px;
 }
 
-.helper-modal .pill.active {
+.selection-modal .pill.active {
     border-color: rgba(39, 174, 96, 0.35);
   background: rgba(39, 174, 96, 0.14);
+}
+
+.selection-modal .modal-field {
+  display: grid;
+  gap: 8px;
+}
+
+.selection-modal .modal-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
 }
 
 .map-card {

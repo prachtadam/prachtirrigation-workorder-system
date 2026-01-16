@@ -69,6 +69,7 @@ function setHelpers(helpers) {
 function setTruck(truckId) {
   state.truckId = truckId;
   localStorage.setItem('TECH_TRUCK_ID', truckId);
+  updateTechDisplay();
 }
 
 async function loadBoot() {
@@ -123,38 +124,56 @@ function getTruckLabel() {
   return truck?.truck_identifier || 'Truck';
 }
 function updateTechDisplay() {
-  const techName = document.getElementById('tech-name');
-  const helperNames = document.getElementById('tech-helpers');
+ const truckLabel = document.getElementById('truck-label');
+  const techName = document.getElementById('truck-tech');
+  const helperNames = document.getElementById('truck-helpers');
+  if (truckLabel) truckLabel.textContent = getTruckLabel();
   if (techName) techName.textContent = state.tech?.full_name || 'Unassigned';
   if (helperNames) helperNames.textContent = getHelperLabel();
 }
 
-function closeHelperModal() {
-  if (!state.helperModal) return;
-  state.helperModal.overlay.remove();
-  state.helperModal.modal.remove();
-  state.helperModal = null;
+function closeSelectionModal() {
+  if (!state.selectionModal) return;
+  state.selectionModal.overlay.remove();
+  state.selectionModal.modal.remove();
+  state.selectionModal = null;
 }
 
-function openHelperModal() {
+function openSelectionModal() {
   if (!state.boot) return;
-  closeHelperModal();
+  closeSelectionModal();
 
   const overlay = document.createElement('div');
   overlay.className = 'overlay show';
-  overlay.addEventListener('click', closeHelperModal);
+  overlay.addEventListener('click', closeSelectionModal);
 
   const modal = document.createElement('div');
-  modal.className = 'helper-modal';
+  modal.className = 'selection-modal';
   modal.innerHTML = `
     <div class="modal-card">
-      <h3>Select Helpers</h3>
-      <div class="modal-list" id="helper-options"></div>
+       <h3>Truck & Helpers</h3>
+      <div class="modal-field">
+        <label for="truck-select">Truck ID</label>
+        <select id="truck-select" class="titleLink select"></select>
+      </div>
+      <div>
+        <div class="modal-label">Helpers</div>
+        <div class="modal-list" id="helper-options"></div>
+      </div>
       <div class="actions">
-        <button class="action secondary" type="button" id="helpers-done">Done</button>
+        <button class="action secondary" type="button" id="selection-done">Done</button>
       </div>
     </div>
   `;
+const select = modal.querySelector('#truck-select');
+  state.boot.trucks.forEach((truck) => {
+    const option = document.createElement('option');
+    option.value = truck.id;
+    option.textContent = truck.truck_identifier;
+    select.appendChild(option);
+  });
+  select.value = state.truckId || state.boot.trucks[0]?.id || '';
+  select.addEventListener('change', () => setTruck(select.value));
 
   const list = modal.querySelector('#helper-options');
   state.boot.users.filter((user) => user.is_helper).forEach((helper) => {
@@ -173,16 +192,19 @@ function openHelperModal() {
     list.appendChild(btn);
   });
 
-  modal.querySelector('#helpers-done').addEventListener('click', closeHelperModal);
+modal.querySelector('#selection-done').addEventListener('click', closeSelectionModal);
   document.body.appendChild(overlay);
   document.body.appendChild(modal);
-  state.helperModal = { overlay, modal };
+  state.selectionModal = { overlay, modal
 }
 
 
 function renderHeader() {
   const header = document.createElement('header');
   header.className = 'titleBlock';
+  if (!state.truckId && state.boot?.trucks?.length) {
+    setTruck(state.boot.trucks[0].id);
+  }
   header.innerHTML = `
      <div class="titleRow">
       <button class="iconBtn" id="menu-btn" aria-label="Menu">
@@ -190,29 +212,20 @@ function renderHeader() {
       </button>
       <button class="iconBtn" id="home-btn" aria-label="Home">🏠</button>
       <div class="truckId">
-        <select id="truck-select" class="titleLink select"></select>
+        <button class="truck-selector" id="truck-selector" type="button">
+          <div class="truck-label" id="truck-label">${getTruckLabel()}</div>
+          <div class="truck-sub" id="truck-tech">${state.tech?.full_name || 'Unassigned'}</div>
+          <div class="truck-sub helpers" id="truck-helpers">${getHelperLabel()}</div>
+        </button>
       </div>
-      <button class="techBox" id="tech-selector" type="button">
-        <div class="titleLink right" id="tech-name">${state.tech?.full_name || 'Unassigned'}</div>
-        <div class="helpers" id="tech-helpers">${getHelperLabel()}</div>
-      </button>
+      
     </div>
      `;
 
-  const select = header.querySelector('#truck-select');
-  state.boot.trucks.forEach((truck) => {
-    const option = document.createElement('option');
-    option.value = truck.id;
-    option.textContent = truck.truck_identifier;
-    select.appendChild(option);
-  });
-  select.value = state.truckId || state.boot.trucks[0]?.id || '';
-  if (!state.truckId && select.value) setTruck(select.value);
-  select.addEventListener('change', () => setTruck(select.value));
-
+  
   header.querySelector('#menu-btn').addEventListener('click', () => toggleDrawer(true));
  header.querySelector('#home-btn').addEventListener('click', renderHome);
-  header.querySelector('#tech-selector').addEventListener('click', openHelperModal);
+  header.querySelector('#truck-selector').addEventListener('click', openSelectionModal);
   return header;
 }
 
@@ -1400,9 +1413,11 @@ function renderRefuel() {
     renderHome();
   });
 
-panel.querySelector('#cancel').addEventListener('click', renderHome);
+  panel.querySelector('#cancel').addEventListener('click', renderHome);
   panel.querySelector('#refuel-back').addEventListener('click', renderHome);
   screenContainer(container);
+}
+
 async function renderRequests() {
   const requests = await listRequests(state.truckId);
     const { container, panel } = createAppLayout();
