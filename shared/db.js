@@ -4,7 +4,7 @@ import { JOB_STATUSES } from './types.js';
 
 let client;
 let jobStatusRpcSupported;
-let jobStatusRpcCheck;
+
 
 function getClient() {
   if (client) return client;
@@ -33,34 +33,14 @@ function handleError(error, context) {
 }
 async function checkJobStatusRpcSupport() {
   if (jobStatusRpcSupported !== undefined) return jobStatusRpcSupported;
-  if (jobStatusRpcCheck) return jobStatusRpcCheck;
+ 
   const { supabaseUrl, supabaseAnonKey } = getConfig();
   if (!supabaseUrl || !supabaseAnonKey) {
     jobStatusRpcSupported = false;
     return jobStatusRpcSupported;
   }
-  jobStatusRpcCheck = fetch(`${supabaseUrl}/rest/v1/`, {
-    headers: {
-      apikey: supabaseAnonKey,
-      Authorization: `Bearer ${supabaseAnonKey}`,
-      Accept: 'application/openapi+json',
-    },
-  })
-    .then(async (response) => {
-      if (!response.ok) return false;
-      const schema = await response.json();
-      return Boolean(schema?.paths?.['/rpc/set_job_status']);
-    })
-    .catch((error) => {
-      console.warn('Unable to check RPC schema; skipping set_job_status.', error);
-      return false;
-    })
-    .then((supported) => {
-      jobStatusRpcSupported = supported;
-      jobStatusRpcCheck = null;
-      return supported;
-    });
-  return jobStatusRpcCheck;
+ jobStatusRpcSupported = true;
+ return jobStatusRpcSupported;
 }
 
 async function listTable(table) {

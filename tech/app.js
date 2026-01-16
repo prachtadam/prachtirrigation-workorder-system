@@ -621,7 +621,7 @@ function openAddInventoryModal(items) {
 }
 
 async function renderMasterInventory() {
-  const items = await listTruckInventory(state.truckID);
+  const items = await listTruckInventory(state.truckId);
   const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
   panel.innerHTML = `
