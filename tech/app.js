@@ -195,7 +195,7 @@ const select = modal.querySelector('#truck-select');
 modal.querySelector('#selection-done').addEventListener('click', closeSelectionModal);
   document.body.appendChild(overlay);
   document.body.appendChild(modal);
-  state.selectionModal = { overlay, modal
+  state.selectionModal = { overlay, modal};
 }
 
 
@@ -388,7 +388,7 @@ function renderLogin() {
     renderHome();
   });
 }
-
+window.renderLogin = renderLogin;
 async function handleLogout() {
   try {
     await signOut();
@@ -1635,7 +1635,12 @@ state.offlineQueueHandlers = {
     await generateAndUploadReports({ job, diagnostics, repairs, parts, durations });
   },
 };
-}
+
 window.addEventListener('online', syncOutbox);
 
 renderLogin();
+if (typeof window.renderLogin === 'function'){
+  window.renderLogin();
+  }else {
+    console.error('renderLogin is not available.');
+  }
