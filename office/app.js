@@ -3009,7 +3009,7 @@ async function renderTruckListView(truck, listType) {
       row.innerHTML = `
         <div class="row-main">
           <div class="row-title">${item.name || (isInventory ? 'Part' : 'Tool')}</div>
-          <div class="row-sub muted">Qty: ${item.qty || 0}</div>
+          <div class="row-sub muted">${isInventory ? 'Minimum Qty' : 'Qty'}: ${item.qty || 0}</div>
         </div>
         <div class="row-meta">
           <button class="pill-x" type="button" aria-label="Remove">✕</button>
@@ -3061,7 +3061,7 @@ async function renderTruckListView(truck, listType) {
       const wrap = document.createElement('div');
       wrap.append(label, primaryInput, dataList);
       const qtyLabel = document.createElement('label');
-      qtyLabel.textContent = 'Quantity';
+      qtyLabel.textContent = 'Minimum Quantity';
       qtyInput = document.createElement('input');
       qtyInput.type = 'number';
       qtyInput.min = '0';
