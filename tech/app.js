@@ -96,11 +96,32 @@ function screenContainer(content) {
   app.innerHTML = '';
   app.appendChild(content);
 }
+function createAppLayout({ withHeader = true } = {}) {
+  const container = document.createElement('div');
+  container.className = 'app';
+
+  if (withHeader) {
+    container.appendChild(renderHeader());
+  }
+
+  const main = document.createElement('main');
+  main.className = 'main';
+  const panel = document.createElement('section');
+  panel.className = 'panel';
+  main.appendChild(panel);
+  container.appendChild(main);
+
+  return { container, panel, main };
+}
 function getHelperLabel() {
   if (!state.helpers.length) return 'Select helpers';
   return state.helpers.join(', ');
 }
 
+function getTruckLabel() {
+  const truck = state.boot?.trucks?.find((item) => item.id === state.truckId);
+  return truck?.truck_identifier || 'Truck';
+}
 function updateTechDisplay() {
   const techName = document.getElementById('tech-name');
   const helperNames = document.getElementById('tech-helpers');
@@ -160,20 +181,23 @@ function openHelperModal() {
 
 
 function renderHeader() {
-  const header = document.createElement('div');
-  header.className = 'header';
+  const header = document.createElement('header');
+  header.className = 'titleBlock';
   header.innerHTML = `
-    <button class="pill" id="menu-btn">☰</button>
-    <div>
-      <div class="muted">Truck</div>
-      <select id="truck-select"></select>
+     <div class="titleRow">
+      <button class="iconBtn" id="menu-btn" aria-label="Menu">
+        <div class="hamburgerLines"><span></span><span></span><span></span></div>
+      </button>
+      <button class="iconBtn" id="home-btn" aria-label="Home">🏠</button>
+      <div class="truckId">
+        <select id="truck-select" class="titleLink select"></select>
+      </div>
+      <button class="techBox" id="tech-selector" type="button">
+        <div class="titleLink right" id="tech-name">${state.tech?.full_name || 'Unassigned'}</div>
+        <div class="helpers" id="tech-helpers">${getHelperLabel()}</div>
+      </button>
     </div>
-    <button class="tech-summary" id="tech-selector" type="button">
-      <div class="muted">Tech</div>
-     <div class="tech-name" id="tech-name">${state.tech?.full_name || 'Unassigned'}</div>
-      <div class="tech-helpers" id="tech-helpers">${getHelperLabel()}</div>
-    </button>
-  `;
+     `;
 
   const select = header.querySelector('#truck-select');
   state.boot.trucks.forEach((truck) => {
@@ -187,6 +211,7 @@ function renderHeader() {
   select.addEventListener('change', () => setTruck(select.value));
 
   header.querySelector('#menu-btn').addEventListener('click', () => toggleDrawer(true));
+ header.querySelector('#home-btn').addEventListener('click', renderHome);
   header.querySelector('#tech-selector').addEventListener('click', openHelperModal);
   return header;
 }
@@ -199,11 +224,40 @@ function renderDrawer() {
   const drawer = document.createElement('div');
   drawer.className = 'drawer';
   drawer.innerHTML = `
-    <h3>Truck Lists</h3>
-    <button class="pill" data-action="current">Current Inventory</button>
-    <button class="pill" data-action="master">Master Truck Inventory</button>
-    <button class="pill" data-action="tools">Truck Tool List</button>
-    <button class="pill" data-action="logout">Log Out</button>
+    <div class="drawerHeader">
+      <div class="title">Information</div>
+      <div class="sub">Lists • Requests • Receipts • Settings</div>
+    </div>
+    <div class="menu">
+      <button class="menuBtn" data-action="current">
+        <div class="menuLeft">
+          <div class="name">Current Inventory</div>
+          <div class="desc">Parts on this truck</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
+      <button class="menuBtn" data-action="master">
+        <div class="menuLeft">
+          <div class="name">Master Truck Inventory</div>
+          <div class="desc">Minimum stock list</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
+      <button class="menuBtn" data-action="tools">
+        <div class="menuLeft">
+          <div class="name">Truck Tool List</div>
+          <div class="desc">Assigned tool inventory</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
+      <button class="menuBtn" data-action="logout">
+        <div class="menuLeft">
+          <div class="name">Log Out</div>
+          <div class="desc">Sign out of this device</div>
+        </div>
+        <span class="chev">›</span>
+      </button>
+    </div>
   `;
 
 
@@ -232,25 +286,28 @@ function toggleDrawer(show) {
 
 function renderHome() {
   clearLastScreen();
-  const container = document.createElement('div');
-  container.className = 'app';
-  container.appendChild(renderHeader());
-
-  const main = document.createElement('div');
-  main.className = 'main list home-main';
-  main.innerHTML = `
-   <button class="pill map-view" data-action="map-view">Map View</button>
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <h2>Home</h2>
+      <div class="screenActions">
+        <button class="pill tiny map-view" data-action="map-view">Map View</button>
+        <span class="badge">${getTruckLabel()}</span>
+      </div>
+    </div>
+    <div class="sectionHint">Quick actions</div>
     <button class="pill large create-job" data-action="create-job">Create Job</button>
     <button class="pill large open-jobs" data-action="open-jobs">Open Jobs <span class="badge" id="open-count">0</span></button>
     <button class="pill large restock" data-action="restock">Restock <span class="badge" id="restock-count">0</span></button>
     <button class="pill large refuel" data-action="refuel">Re-fuel</button>
     <button class="pill large requests" data-action="requests">Requests</button>
-    <button class="pill large" data-action="receipts">Receipts</button>
+    <button class="pill large" receipts" data-action="receipts">Receipts</button>
   `;
-  container.appendChild(main);
+ 
   screenContainer(container);
 
-  main.querySelectorAll('[data-action]').forEach((btn) => {
+ panel.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       if (action === 'create-job') return renderCreateJob();
@@ -276,9 +333,8 @@ async function updateBadgeCounts() {
 }
 
 function renderLogin() {
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout({ withHeader: false });
+  panel.innerHTML = `
     <div class="card">
       <h2>Tech Login</h2>
       <label>Email</label>
@@ -291,9 +347,9 @@ function renderLogin() {
   `;
   screenContainer(container);
 
-  container.querySelector('#login-btn').addEventListener('click', async () => {
-    const email = container.querySelector('#login-email').value.trim();
-    const password = container.querySelector('#login-password').value.trim();
+  panel.querySelector('#login-btn').addEventListener('click', async () => {
+    const email = panel.querySelector('#login-email').value.trim();
+    const password = panel.querySelector('#login-password').value.trim();
     if (!email || !password) {
       showToast('Enter email and password.');
       return;
@@ -306,7 +362,7 @@ function renderLogin() {
     }
   });
 
-  container.querySelector('#offline-btn').addEventListener('click', async () => {
+ panel.querySelector('#offline-btn').addEventListener('click', async () => {
     if (!state.boot) await loadBoot();
     const lastTech = localStorage.getItem('TECH_USER_EMAIL');
     if (lastTech) {
@@ -353,10 +409,20 @@ async function initializeApp() {
 
 async function renderInventory() {
   const items = await listTruckInventory(state.truckId);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = '<div class="card"><h3>Current Inventory</h3></div>';
-  const card = container.querySelector('.card');
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="inventory-back">←</button>
+      <h2>Current Inventory</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<h3>Parts on truck</h3>';
+  panel.appendChild(card);
   items.forEach((item) => {
     const pill = document.createElement('button');
     pill.className = 'pill';
@@ -387,21 +453,32 @@ async function renderInventory() {
     }, upsertTruckInventory);
     renderInventory();
   });
+   panel.querySelector('#inventory-back').addEventListener('click', renderHome);
+  panel.appendChild(addCard);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderHome);
-  container.appendChild(backBtn);
-  container.appendChild(addCard);
+  panel.querySelector('#inventory-back').addEventListener('click', renderHome);
+  panel.appendChild(addCard);
   screenContainer(container);
 }
 
 async function renderMasterInventory() {
   const restock = await getRestockList(state.truckId);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = '<div class="card"><h3>Master Truck Inventory</h3></div>';
-  const card = container.querySelector('.card');
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="master-back">←</button>
+      <h2>Master Truck Inventory</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<h3>Minimum stock list</h3>';
+  panel.appendChild(card);
   restock.forEach((item) => {
     const pill = document.createElement('button');
     pill.className = 'pill';
@@ -412,6 +489,7 @@ async function renderMasterInventory() {
     card.appendChild(pill);
   });
   if (!restock.length) card.innerHTML += '<p>No minimums set.</p>';
+  panel.querySelector('#master-back').addEventListener('click', renderHome);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
@@ -422,10 +500,19 @@ async function renderMasterInventory() {
 
 async function renderToolList() {
   const tools = await listTruckTools(state.truckId);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = '<div class="card"><h3>Truck Tools</h3></div>';
-  const card = container.querySelector('.card');
+ const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="tools-back">←</button>
+      <h2>Truck Tools</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<h3>Assigned tools</h3>';
+  panel.appendChild(card);
   tools.forEach((tool) => {
     const pill = document.createElement('button');
     pill.className = 'pill';
@@ -434,22 +521,28 @@ async function renderToolList() {
     card.appendChild(pill);
   });
   if (!tools.length) card.innerHTML += '<p>No tools assigned.</p>';
+  panel.querySelector('#tools-back').addEventListener('click', renderHome);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderHome);
-  container.appendChild(backBtn);
+  panel.appendChild(backBtn);
   screenContainer(container);
 }
 
 function renderCreateJob() {
-  const container = document.createElement('div');
-  container.className = 'main';
+ const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
   const customerOptions = state.boot.customers.map((customer) => `<option value="${customer.id}">${customer.name}</option>`).join('');
   const fieldOptions = state.boot.fields.map((field) => `<option value="${field.id}">${field.name}</option>`).join('');
   const typeOptions = state.boot.jobTypes.map((type) => `<option value="${type.id}">${type.name}</option>`).join('');
 
-  container.innerHTML = `
+panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="job-cancel">←</button>
+      <h2>Create Job</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Create Job</h3>
       <label>Customer</label>
@@ -461,15 +554,15 @@ function renderCreateJob() {
       <label>Description</label>
       <textarea id="job-description"></textarea>
       <button class="action" id="job-save">Create Job</button>
-      <button class="action secondary" id="job-cancel">Back</button>
+    <button class="action secondary" id="job-cancel-secondary">Back</button>
     </div>
   `;
-  container.querySelector('#job-save').addEventListener('click', async () => {
+  panel.querySelector('#job-save').addEventListener('click', async () => {
     const payload = {
-      customer_id: container.querySelector('#job-customer').value,
-      field_id: container.querySelector('#job-field').value,
-      job_type_id: container.querySelector('#job-type').value,
-      description: container.querySelector('#job-description').value,
+     customer_id: panel.querySelector('#job-customer').value,
+      field_id: panel.querySelector('#job-field').value,
+      job_type_id: panel.querySelector('#job-type').value,
+      description: panel.querySelector('#job-description').value,
       truck_id: state.truckId,
       tech_id: state.tech?.id,
       helpers: state.helpers.join(', '),
@@ -482,15 +575,23 @@ function renderCreateJob() {
       showToast(error.message);
     }
   });
-  container.querySelector('#job-cancel').addEventListener('click', renderHome);
+ panel.querySelector('#job-cancel').addEventListener('click', renderHome);
+  panel.querySelector('#job-cancel-secondary').addEventListener('click', renderHome);
   screenContainer(container);
 }
 
 async function renderOpenJobs() {
   const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED] });
   const activeEvents = await listActiveJobEvents(jobs.map((job) => job.id));
-  const container = document.createElement('div');
-  container.className = 'main';
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="open-jobs-back">←</button>
+      <h2>Open Jobs</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
  
   const card = document.createElement('div');
   card.className = 'card list';
@@ -521,15 +622,13 @@ async function renderOpenJobs() {
     });
 
   if (!jobs.length) card.innerHTML += '<p>No open jobs.</p>';
-
+panel.appendChild(card);
+  panel.querySelector('#open-jobs-back').addEventListener('click', renderHome);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderHome);
-
-  container.appendChild(card);
-  
-  container.appendChild(backBtn);
+ panel.appendChild(backBtn);
   screenContainer(container);
 }
 function mapStatusColor(status = '') {
@@ -565,16 +664,26 @@ function buildLeafletMarkerIcon(color) {
 }
 
 function renderMapView() {
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="map-back">←</button>
+      <h2>Map View</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card map-card">
-      <h3>Map View</h3>
+      <div class="mapHeaderRow">
+        <h3>Map Overview</h3>
+      </div>
       <div class="map-canvas" id="tech-map"></div>
       <div class="map-overlay" id="tech-map-overlay">Loading map…</div>
     </div>
   `;
-
+   panel.querySelector('#map-back').addEventListener('click', () => {
+    stopMapTracking();
+    renderHome();
+  });
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
@@ -582,7 +691,7 @@ function renderMapView() {
     stopMapTracking();
     renderHome();
   });
-  container.appendChild(backBtn);
+  panel.appendChild(backBtn);
   screenContainer(container);
   renderTechMap();
 }
@@ -647,7 +756,7 @@ async function renderTechMap() {
     `;
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
-    openBtn.className = 'pill';
+    openBtn.className = 'pill inline';
     openBtn.textContent = 'Open Job';
     openBtn.addEventListener('click', () => {
       map.closePopup();
@@ -697,9 +806,14 @@ async function renderTechMap() {
 }
 function renderJobCard(job) {
   state.currentJob = job;
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="job-card-back">←</button>
+      <h2>Job Details</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>${job.customers?.name}</h3>
       <p><strong>Field:</strong> ${job.fields?.name}</p>
@@ -711,27 +825,33 @@ function renderJobCard(job) {
       <p>${job.description || ''}</p>
       <div class="actions">
         <button class="action" id="take-job">Take Job</button>
-        <button class="action secondary" id="back">Back</button>
+       <button class="action secondary" id="job-card-secondary-back">Back</button>
       </div>
     </div>
   `;
-  container.querySelector('#back').addEventListener('click', renderOpenJobs);
-  container.querySelector('#take-job').addEventListener('click', () => renderRoutePrompt(job));
+  panel.querySelector('#job-card-back').addEventListener('click', renderOpenJobs);
+  panel.querySelector('#job-card-secondary-back').addEventListener('click', renderOpenJobs);
+  panel.querySelector('#take-job').addEventListener('click', () => renderRoutePrompt(job));
   screenContainer(container);
 }
 
 function renderRoutePrompt(job) {
   saveLastScreen('route', job.id);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+ const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="route-back">←</button>
+      <h2>Route to Job</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Route to Job?</h3>
       <button class="action" id="route">Route Me</button>
       <button class="action secondary" id="skip">Skip</button>
     </div>
   `;
-  const routeBtn = container.querySelector('#route');
+  const routeBtn = panel.querySelector('#route');
   if (isOffline()) {
     routeBtn.disabled = true;
     routeBtn.textContent = 'Route unavailable offline';
@@ -746,10 +866,11 @@ function renderRoutePrompt(job) {
       renderArrived(job);
     });
   }
-  container.querySelector('#skip').addEventListener('click', async () => {
+  panel.querySelector('#skip').addEventListener('click', async () => {
     await takeJob(job);
     renderArrived(job);
   });
+   panel.querySelector('#route-back').addEventListener('click', () => renderJobCard(job));
   screenContainer(container);
 }
 
@@ -761,9 +882,14 @@ async function takeJob(job) {
 
 function renderArrived(job) {
   saveLastScreen('arrived', job.id);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+ const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="arrived-back">←</button>
+      <h2>Arrival</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Arrived?</h3>
       <p>${job.customers?.name} · ${job.fields?.name}</p>
@@ -773,7 +899,7 @@ function renderArrived(job) {
       </div>
     </div>
   `;
-  container.querySelector('#arrived').addEventListener('click', async () => {
+  panel.querySelector('#arrived').addEventListener('click', async () => {
     const nextStatus = job.last_active_status || JOB_STATUSES.ON_SITE_DIAGNOSTICS;
     await executeOrQueue('setJobStatus', { jobId: job.id, status: nextStatus }, ({ jobId, status }) =>
       setJobStatus(jobId, status)
@@ -790,14 +916,20 @@ function renderArrived(job) {
     );
     renderOpenJobs();
   });
+   panel.querySelector('#arrived-back').addEventListener('click', () => renderJobCard(job));
   screenContainer(container);
 }
 
 function renderJobIntake(job) {
   saveLastScreen('intake', job.id);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="intake-back">←</button>
+      <h2>Job Intake</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Job Intake</h3>
       <p>${job.customers?.name} · ${job.fields?.name}</p>
@@ -817,18 +949,18 @@ function renderJobIntake(job) {
   `;
   const updateFieldInfo = async () => {
     const payload = {
-      lat: container.querySelector('#field-lat').value || null,
-      lon: container.querySelector('#field-lon').value || null,
-      serial_number: container.querySelector('#field-serial').value || null,
-      last_known_hours: container.querySelector('#field-hours').value || null,
+      lat: panel.querySelector('#field-lat').value || null,
+      lon: panel.querySelector('#field-lon').value || null,
+      serial_number: panel.querySelector('#field-serial').value || null,
+      last_known_hours: panel.querySelector('#field-hours').value || null,
     };
     await executeOrQueue('updateField', { fieldId: job.field_id, payload }, ({ fieldId, payload }) => updateField(fieldId, payload));
   };
-  container.querySelector('#start-diagnostics').addEventListener('click', async () => {
+  panel.querySelector('#start-diagnostics').addEventListener('click', async () => {
     await updateFieldInfo();
     renderDiagnostics(job);
   });
-  container.querySelector('#skip-repair').addEventListener('click', async () => {
+  panel.querySelector('#skip-repair').addEventListener('click', async () => {
     await updateFieldInfo();
     await executeOrQueue('setJobStatus', { jobId: job.id, status: JOB_STATUSES.ON_SITE_REPAIR }, ({ jobId, status }) =>
       setJobStatus(jobId, status)
@@ -841,10 +973,17 @@ function renderJobIntake(job) {
 async function renderDiagnostics(job) {
   saveLastScreen('diagnostics', job.id);
   const diagnostics = await listJobDiagnostics(job.id);
-  const container = document.createElement('div');
-  container.className = 'main';
+   const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
   const card = document.createElement('div');
   card.className = 'card';
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="diagnostics-back">←</button>
+      <h2>Diagnostics</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
   card.innerHTML = `
     <h3>Diagnostics</h3>
     <div class="card">
@@ -895,16 +1034,20 @@ async function renderDiagnostics(job) {
   card.querySelector('#found-problem').addEventListener('click', () => renderFoundProblem(job));
   card.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_DIAGNOSTICS));
   card.querySelector('#back').addEventListener('click', renderJobIntake.bind(null, job));
-
-  container.appendChild(card);
+ panel.querySelector('#diagnostics-back').addEventListener('click', renderJobIntake.bind(null, job));
+  panel.appendChild(card);
   screenContainer(container);
 }
 
 function renderFoundProblem(job) {
   saveLastScreen('found-problem', job.id);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+   const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="found-problem-back">←</button>
+      <h2>Found Problem</h2>
+      <span class="badge">${getTruckLabel()}</span
     <div class="card">
       <h3>Found Problem</h3>
       <div class="card">
@@ -921,8 +1064,8 @@ function renderFoundProblem(job) {
       </div>
     </div>
   `;
-  const input = container.querySelector('#problem');
-  const continueBtn = container.querySelector('#continue');
+ const input = panel.querySelector('#problem');
+  const continueBtn = panel.querySelector('#continue');
   input.addEventListener('input', () => {
     continueBtn.disabled = !input.value.trim();
   });
@@ -935,8 +1078,9 @@ function renderFoundProblem(job) {
     );
     renderRepair(job);
   });
-  container.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_DIAGNOSTICS));
-  container.querySelector('#back').addEventListener('click', () => renderDiagnostics(job));
+ panel.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_DIAGNOSTICS));
+  panel.querySelector('#back').addEventListener('click', () => renderDiagnostics(job));
+  panel.querySelector('#found-problem-back').addEventListener('click', () => renderDiagnostics(job));
   screenContainer(container);
 }
 
@@ -944,9 +1088,14 @@ async function renderRepair(job) {
   saveLastScreen('repair', job.id);
   const parts = await listJobParts(job.id);
   const inventory = await listTruckInventory(state.truckId);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="repair-back">←</button>
+      <h2>Repair</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Repair</h3>
       <div class="card">
@@ -969,7 +1118,7 @@ async function renderRepair(job) {
     </div>
   `;
 
-  const select = container.querySelector('#part-select');
+  const select = panel.querySelector('#part-select');
   inventory.forEach((item) => {
     const option = document.createElement('option');
     option.value = item.product_id;
@@ -977,7 +1126,7 @@ async function renderRepair(job) {
     select.appendChild(option);
   });
 
-  const list = container.querySelector('#parts-list');
+  const list = panel.querySelector('#parts-list');
   parts.forEach((part) => {
     const pill = document.createElement('button');
     pill.className = 'pill';
@@ -992,8 +1141,8 @@ async function renderRepair(job) {
     list.appendChild(pill);
   });
 
-  container.querySelector('#add-part').addEventListener('click', async () => {
-    const qty = parseInt(container.querySelector('#part-qty').value, 10);
+  panel.querySelector('#add-part').addEventListener('click', async () => {
+    const qty = parseInt(panel.querySelector('#part-qty').value, 10);
     if (!select.value || !qty) {
       showToast('Select part and quantity.');
       return;
@@ -1008,8 +1157,8 @@ async function renderRepair(job) {
     renderRepair(job);
   });
 
-  container.querySelector('#complete').addEventListener('click', async () => {
-    const desc = container.querySelector('#repair-desc').value.trim();
+  panel.querySelector('#complete').addEventListener('click', async () => {
+    const desc = panel.querySelector('#repair-desc').value.trim();
     if (!desc) {
       showToast('Repair description required.');
       return;
@@ -1020,16 +1169,22 @@ async function renderRepair(job) {
     await executeOrQueue('addRepair', { job_id: job.id, description: desc }, addJobRepair);
     renderChecklist(job);
   });
-  container.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_REPAIR));
-  container.querySelector('#back').addEventListener('click', () => renderFoundProblem(job));
+ panel.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_REPAIR));
+  panel.querySelector('#back').addEventListener('click', () => renderFoundProblem(job));
+  panel.querySelector('#repair-back').addEventListener('click', () => renderFoundProblem(job));
   screenContainer(container);
 }
 
 function renderChecklist(job) {
   saveLastScreen('checklist', job.id);
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="checklist-back">←</button>
+      <h2>Final Checklist</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card checklist">
       <h3>Final Checklist</h3>
       <label><input type="checkbox" /> Verify all repair parts are tight, affixed, and in original appearance</label>
@@ -1048,13 +1203,14 @@ function renderChecklist(job) {
       </div>
     </div>
   `;
-  const checkboxes = [...container.querySelectorAll('input[type="checkbox"]')];
-  const completeBtn = container.querySelector('#complete');
-  const unableBtn = container.querySelector('#unable');
+  const checkboxes = [...panel.querySelectorAll('input[type="checkbox"]')];
+  const completeBtn = panel.querySelector('#complete');
+  const unableBtn = panel.querySelector('#unable');
 
   completeBtn.addEventListener('click', () => finalizeJob(job, checkboxes, false));
   unableBtn.addEventListener('click', () => finalizeJob(job, checkboxes, true));
-  container.querySelector('#back').addEventListener('click', () => renderRepair(job));
+   panel.querySelector('#back').addEventListener('click', () => renderRepair(job));
+  panel.querySelector('#checklist-back').addEventListener('click', () => renderRepair(job));
   screenContainer(container);
 }
 
@@ -1107,8 +1263,15 @@ async function resumeJob(screen) {
 
 async function renderRestock() {
   const restockItems = await getRestockList(state.truckId);
-  const container = document.createElement('div');
-  container.className = 'main';
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="restock-back">←</button>
+      <h2>Restock</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
   const card = document.createElement('div');
   card.className = 'card list';
   card.innerHTML = '<h3>Restock</h3>';
@@ -1139,22 +1302,27 @@ async function renderRestock() {
     );
     renderHome();
   });
-
+ panel.appendChild(card);
+  panel.appendChild(commitBtn);
+  panel.querySelector('#restock-back').addEventListener('click', renderHome);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderHome);
 
-  container.appendChild(card);
-  container.appendChild(commitBtn);
-  container.appendChild(backBtn);
+  panel.appendChild(backBtn);
   screenContainer(container);
 }
 
 function renderRestockItem(item, restockItems) {
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="restock-item-back">←</button>
+      <h2>Restock Item</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>${item.product.name}</h3>
       <label>Acquired Qty</label>
@@ -1166,12 +1334,12 @@ function renderRestockItem(item, restockItems) {
       </div>
     </div>
   `;
-  container.querySelector('#save').addEventListener('click', () => {
-    const qty = parseInt(container.querySelector('#acquired').value, 10) || 0;
+  panel.querySelector('#save').addEventListener('click', () => {
+    const qty = parseInt(panel.querySelector('#acquired').value, 10) || 0;
     item.acquiredQty = qty;
     renderRestock();
   });
-  container.querySelector('#out').addEventListener('click', async () => {
+  panel.querySelector('#out').addEventListener('click', async () => {
     await executeOrQueue('outOfStock', {
       product_id: item.product.id,
       truck_id: state.truckId,
@@ -1179,14 +1347,20 @@ function renderRestockItem(item, restockItems) {
     }, createOutOfStock);
     renderRestock();
   });
-  container.querySelector('#close').addEventListener('click', renderRestock);
+  panel.querySelector('#close').addEventListener('click', renderRestock);
+  panel.querySelector('#restock-item-back').addEventListener('click', renderRestock);
   screenContainer(container);
 }
 
 function renderRefuel() {
-  const container = document.createElement('div');
-  container.className = 'main';
-  container.innerHTML = `
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="refuel-back">←</button>
+      <h2>Re-fuel</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Re-fuel</h3>
       <label>Current Odometer</label>
@@ -1203,15 +1377,15 @@ function renderRefuel() {
       </div>
     </div>
   `;
-   container.querySelector('#save').addEventListener('click', async () => {
+   panel.querySelector('#save').addEventListener('click', async () => {
     const payload = {
       receipt_type: 'Re-fuel',
       truck_id: state.truckId,
       tech_id: state.tech?.id,
-      odometer: container.querySelector('#odometer').value,
-      gallons: container.querySelector('#gallons').value,
-      price_per_gallon: container.querySelector('#price').value,
-      total_cost: container.querySelector('#total').value,
+      odometer: panel.querySelector('#odometer').value,
+      gallons: panel.querySelector('#gallons').value,
+      price_per_gallon: panel.querySelector('#price').value,
+      total_cost: panel.querySelector('#total').value,
     };
     if (!payload.odometer || !payload.gallons || !payload.price_per_gallon || !payload.total_cost) {
       showToast('All fields required.');
@@ -1226,11 +1400,20 @@ function renderRefuel() {
     renderHome();
   });
 
-
+panel.querySelector('#cancel').addEventListener('click', renderHome);
+  panel.querySelector('#refuel-back').addEventListener('click', renderHome);
+  screenContainer(container);
 async function renderRequests() {
   const requests = await listRequests(state.truckId);
-  const container = document.createElement('div');
-  container.className = 'main';
+    const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="requests-back">←</button>
+      <h2>Requests</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
   const card = document.createElement('div');
   card.className = 'card list';
   card.innerHTML = '<h3>Requests</h3>';
@@ -1245,19 +1428,20 @@ async function renderRequests() {
   addBtn.className = 'action';
   addBtn.textContent = 'Add Request';
   addBtn.addEventListener('click', renderRequestForm);
+  panel.appendChild(card);
+  panel.appendChild(addBtn);
+  panel.querySelector('#requests-back').addEventListener('click', renderHome);
   const backBtn = document.createElement('button');
   backBtn.className = 'pill';
   backBtn.textContent = 'Back';
   backBtn.addEventListener('click', renderHome);
-  container.appendChild(card);
-  container.appendChild(addBtn);
-  container.appendChild(backBtn);
+ panel.appendChild(backBtn);
   screenContainer(container);
 }
 
 async function renderRequestForm() {
-  const container = document.createElement('div');
-  container.className = 'main';
+   const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
   const helperOptions = state.boot.users.map((user) => `<option value="${user.id}">${user.full_name}</option>`).join('');
   const truckTools = await listTruckTools(state.truckId);
   const toolOptions = truckTools.map((tool) => {
@@ -1265,7 +1449,12 @@ async function renderRequestForm() {
     return `<option value="${name}">${name}</option>`;
   }).join('');
   const requestTypeOptions = state.boot.requestTypes.map((type) => `<option value="${type.name}">${type.name}</option>`).join('');
-  container.innerHTML = `
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="request-form-back">←</button>
+      <h2>New Request</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>New Request</h3>
       <label>Request Type</label>
@@ -1303,12 +1492,12 @@ async function renderRequestForm() {
       </div>
     </div>
   `;
-  const reqTypeSelect = container.querySelector('#req-type');
+  const reqTypeSelect = panel.querySelector('#req-type');
   const sections = {
-    'Time off': container.querySelector('#req-timeoff'),
-    Tool: container.querySelector('#req-tool'),
-    'Truck maintenance': container.querySelector('#req-maintenance'),
-    Purchase: container.querySelector('#req-purchase'),
+    'Time off': panel.querySelector('#req-timeoff'),
+    Tool: panel.querySelector('#req-tool'),
+    'Truck maintenance': panel.querySelector('#req-maintenance'),
+    Purchase: panel.querySelector('#req-purchase'),
   };
   const updateSections = () => {
     Object.values(sections).forEach((section) => { section.style.display = 'none'; });
@@ -1318,31 +1507,31 @@ async function renderRequestForm() {
   updateSections();
   reqTypeSelect.addEventListener('change', updateSections);
 
-  container.querySelector('#save').addEventListener('click', async () => {
-    const type = container.querySelector('#req-type').value;
+  panel.querySelector('#save').addEventListener('click', async () => {
+    const type = panel.querySelector('#req-type').value;
     let desc = '';
     const metadata = {};
     if (type === 'Time off') {
-      metadata.person_id = container.querySelector('#req-person').value;
-      metadata.date = container.querySelector('#req-date').value;
+      metadata.person_id = panel.querySelector('#req-person').value;
+      metadata.date = panel.querySelector('#req-date').value;
       desc = `Time off requested for ${metadata.date || 'unspecified date'}.`;
     } else if (type === 'Tool') {
-      metadata.tool_type = container.querySelector('#tool-type').value;
-      metadata.tool_name = container.querySelector('#req-tool-name').value;
-      desc = container.querySelector('#req-tool-desc').value.trim();
+      metadata.tool_type = panel.querySelector('#tool-type').value;
+      metadata.tool_name = panel.querySelector('#req-tool-name').value;
+      desc = panel.querySelector('#req-tool-desc').value.trim();
       if (metadata.tool_type === 'replacement' && !metadata.tool_name) {
         showToast('Select replacement tool.');
         return;
       }
     } else if (type === 'Truck maintenance') {
-      metadata.odometer = container.querySelector('#req-odometer').value;
-      desc = container.querySelector('#req-maintenance-desc').value.trim();
+      metadata.odometer = panel.querySelector('#req-odometer').value;
+      desc = panel.querySelector('#req-maintenance-desc').value.trim();
       if (!metadata.odometer) {
         showToast('Odometer required.');
         return;
       }
     } else if (type === 'Purchase') {
-      desc = container.querySelector('#req-purchase-desc').value.trim();
+      desc = panel.querySelector('#req-purchase-desc').value.trim();
     }
     if (!desc) {
       showToast('Description required.');
@@ -1358,15 +1547,21 @@ async function renderRequestForm() {
     await executeOrQueue('createRequest', payload, createRequest);
     renderRequests();
   });
-  container.querySelector('#cancel').addEventListener('click', renderRequests);
+  panel.querySelector('#cancel').addEventListener('click', renderRequests);
+  panel.querySelector('#request-form-back').addEventListener('click', renderRequests);
   screenContainer(container);
 }
 
 function renderReceipts() {
-  const container = document.createElement('div');
-  container.className = 'main';
+ const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
   const receiptOptions = state.boot.receiptTypes.map((type) => `<option value="${type.name}">${type.name}</option>`).join('');
-  container.innerHTML = `
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="receipts-back">←</button>
+      <h2>Receipts</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
     <div class="card">
       <h3>Add Receipt</h3>
       <label>Receipt Type</label>
@@ -1381,11 +1576,11 @@ function renderReceipts() {
       </div>
     </div>
   `;
-  container.querySelector('#save').addEventListener('click', async () => {
+  panel.querySelector('#save').addEventListener('click', async () => {
     const payload = {
-      receipt_type: container.querySelector('#receipt-type').value,
-      qty: container.querySelector('#receipt-qty').value,
-      description: container.querySelector('#receipt-desc').value,
+      receipt_type: panel.querySelector('#receipt-type').value,
+      qty: panel.querySelector('#receipt-qty').value,
+      description: panel.querySelector('#receipt-desc').value,
       truck_id: state.truckId,
       tech_id: state.tech?.id,
     };
@@ -1393,7 +1588,8 @@ function renderReceipts() {
     showToast('Receipt saved.');
     renderHome();
   });
-  container.querySelector('#cancel').addEventListener('click', renderHome);
+   panel.querySelector('#cancel').addEventListener('click', renderHome);
+  panel.querySelector('#receipts-back').addEventListener('click', renderHome);
   screenContainer(container);
 }
 
