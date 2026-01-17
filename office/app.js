@@ -4064,7 +4064,8 @@ function bindInventoryMapShortcut() {
   const btn = document.getElementById('open-inventory-map');
   if (!btn) return;
   btn.addEventListener('click', () => {
-    window.open('../inventory-app/inventory.html', '_blank', 'noopener');
+  const url = new URL('../inventory-app/inventory.html', window.location.href);
+    window.location.assign(url.toString());
   });
 }
 

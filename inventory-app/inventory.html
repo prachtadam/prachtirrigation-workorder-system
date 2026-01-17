@@ -1295,7 +1295,8 @@ function openBin(binId, opts={}){
     setTimeout(()=>document.getElementById("binSkuSelect")?.focus(), 50);
   }
 }
-function saveBin(binId){
+async function saveBin(binId){
+  const previousSku = STATE.binAssignments[ginId] ||"";
   const sku = (document.getElementById("binSkuSelect")?.value || "").trim();
   const qty = n2(document.getElementById("binQtyInput")?.value);
 
@@ -1309,6 +1310,17 @@ function saveBin(binId){
   toast("Saved bin");
   closeModal();
   render();
+try{
+    if(previousSku && previousSku !== sku){
+      await syncShelfLocationForSku(previousSku);
+    }
+    if(sku){
+      await syncShelfLocationForSku(sku);
+    }
+  }catch(e){
+    console.error("Shelf sync failed", e);
+    toast("Shelf sync failed. Saved locally.");
+  }
 }
 
 function openNewProduct(binId){
@@ -1366,12 +1378,27 @@ async function saveNewProductAndAssign(binId){
   saveState();
   try{
     await syncProductToSupabase(sku, payload);
+    await syncShelfLocationForSku(sku);
   }catch(e){
     console.error("Supabase sync failed", e);
     toast("Saved locally; sync failed.");
   }
   toast("Product saved");
   openBin(binId);
+}
+
+function buildShelfLocationSummary(sku){
+  const locs = locationsForSku(sku);
+  if(!locs.length) return "";
+  return locs.map((loc)=> `${loc.aisleName} • Side ${loc.side} • ${loc.shelfId} • Bin ${loc.bin}`).join(" | ");
+}
+
+async function syncShelfLocationForSku(sku){
+  if(!partsSync.enabled) return;
+  const existingId = partsSync.idsBySku.get(sku);
+  if(!existingId) return;
+  const shelf = buildShelfLocationSummary(sku);
+  await updatePart(existingId, { shelf });
 }
 
 /* FIND: search + show locations + jump/highlight (per your doc) */
@@ -1915,6 +1942,42 @@ document.addEventListener("keydown", (e)=>{
   }
 });
 
+const GLOBAL_HANDLERS = {
+  go,
+  back,
+  closeModal,
+  selectAisle,
+  addLevel,
+  confirmAddLevel,
+  addAisle,
+  confirmAddAisle,
+  setSide,
+  setOrientation,
+  openShelf,
+  addShelf,
+  confirmAddShelf,
+  openBin,
+  addBin,
+  openNewProduct,
+  saveBin,
+  saveNewProductAndAssign,
+  jumpToBin,
+  openInventorySession,
+  startInventory,
+  resumeInventory,
+  pauseInventory,
+  invPrev,
+  invNext,
+  createProduct,
+  editProduct,
+  saveSetupProduct,
+  deleteSetupProduct,
+  saveEditProduct,
+  viewFind,
+  render,
+};
+
+Object.assign(window, GLOBAL_HANDLERS);
 /* ---------- Boot ---------- */
 (async function boot(){
   // if no aisles, seed a couple to make it feel alive (optional)
