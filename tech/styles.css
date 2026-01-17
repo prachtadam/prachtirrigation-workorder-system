@@ -527,7 +527,7 @@ textarea {
   padding: 12px 12px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+ background: var(--panel-2);
   color: var(--text);
   font: inherit;
 }
@@ -777,13 +777,18 @@ textarea {
 }
 
 #truck-select {
- background: transparent;
+ background: var(--panel-2);
   color: var(--text);
 }
 
 #truck-select option {
-  background: #0f172a;
+   background: var(--panel-2);
   color: #fff;
+}
+
+select option {
+  background: var(--panel-2);
+  color: var(--text);
 }
 
 button,

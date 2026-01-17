@@ -41,7 +41,6 @@ import {
   updateTruckInventory,
   deleteTruckInventory,
   listAllRequests,
-  listRequestHistory,
   listOutOfStock,
   deleteOutOfStock,
   listReceipts,
@@ -1430,13 +1429,10 @@ async function renderRequests() {
   viewSubtitle.textContent = 'Resolve and archive tech requests.';
   viewActions.innerHTML = '';
 
-  const [requests, history] = await Promise.all([
-    listAllRequests(),
-    listRequestHistory(),
-  ]);
-const activeRequests = requests.filter((req) => req.status !== 'approved');
+  const requests = await listAllRequests();
+  const activeRequests = requests.filter((req) => req.status !== 'approved');
   const layout = document.createElement('div');
-  layout.className = 'grid-two';
+  layout.className = 'section-stack';
 
   const activeCard = document.createElement('div');
   activeCard.className = 'card section-stack';
@@ -1533,28 +1529,7 @@ const activeRequests = requests.filter((req) => req.status !== 'approved');
     activeCard.innerHTML += '<p>No active requests.</p>';
   }
 
-  const historyCard = document.createElement('div');
-  historyCard.className = 'card section-stack';
-  historyCard.innerHTML = '<h3>Resolved History</h3>';
-  history.slice(0, 8).forEach((req) => {
-    const pill = document.createElement('div');
-    pill.className = 'pill';
-    pill.innerHTML = `
-      <div>
-        <strong>${req.request_type}</strong>
-        <div class="muted">${req.users?.full_name || 'Tech'} · ${new Date(req.resolved_at).toLocaleDateString()}</div>
-        <div>${req.description}</div>
-      </div>
-    `;
-    historyCard.appendChild(pill);
-  });
-
-  if (!history.length) {
-    historyCard.innerHTML += '<p>No resolved requests yet.</p>';
-  }
-
   layout.appendChild(activeCard);
-  layout.appendChild(historyCard);
   viewContainer.innerHTML = '';
   viewContainer.appendChild(layout);
 }
@@ -1622,12 +1597,12 @@ async function renderReceipts() {
 
   pendingReceipts.forEach((receipt) => {
     const pill = document.createElement('button');
-    pill.className = 'pill list-row';
+    pill.className = 'pill list-row receipt-row';
     pill.innerHTML = `
       <div class="row-main">
         <div class="row-title">${escapeHtml(receipt.receipt_type || 'Receipt')}</div>
-        <div class="row-sub muted">${new Date(receipt.created_at).toLocaleString()} • Truck ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
-        <div class="row-sub">${escapeHtml(renderItemSummary(receipt))}</div>
+        <div class="row-sub muted">${new Date(receipt.created_at).toLocaleString()}</div>
+        <div class="row-sub muted">Truck ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
       </div>
       <div class="row-meta">
         <span class="badge">${receipt.total_cost ? `$${Number(receipt.total_cost).toFixed(2)}` : 'Review'}</span>
@@ -3601,97 +3576,73 @@ function filterEventsByDate(events, range) {
   });
 }
 
-async function renderReports() {
+  function renderReports() {
+  renderReportPicker();
+}
+
+function renderReportPicker() {
   viewTitle.textContent = 'Reports';
-  viewSubtitle.textContent = 'Time status and inventory audit summaries.';
+  viewSubtitle.textContent = 'Select a report, ten set filters to view data.';
+  viewActions.innerHTML = '';
+  const container = document.createElement('div');
+  container.className = 'section-stack';
+ const card = document.createElement('div');
+  card.className = 'card section-stack';
+  card.innerHTML = '<h3>Reports</h3><div class="muted">Choose a report to open filters.</div>';
+const list = document.createElement('div');
+  list.className = 'list';
+[
+    {
+      id: 'time-status',
+      title: 'Time Status',
+      description: 'Filter tech time status totals by tech, helper, status, and date.',
+    },
+    {
+      id: 'inventory',
+      title: 'Inventory',
+      description: 'Review inventory count events and resolved items.',
+    },
+    {
+      id: 'receipts',
+      title: 'Receipt Decisions',
+      description: 'See approved and denied receipt totals.',
+    },
+  ].forEach((report) => {
+    const pill = document.createElement('button');
+    pill.className = 'pill list-row';
+    pill.type = 'button';
+    pill.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${report.title}</div>
+        <div class="row-sub muted">${report.description}</div>
+      </div>
+      <div class="row-meta">
+        <span class="badge">Open</span>
+      </div>
+    `;
+    pill.addEventListener('click', () => renderReportDetail(report.id));
+    list.appendChild(pill);
+  });
+ card.appendChild(list);
+  container.appendChild(card);
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(container);
+}
+  async function renderReportDetail(reportId) {
+  viewTitle.textContent = 'Reports';
+  viewSubtitle.textContent = 'Adjust filters to view report data.';
   viewActions.innerHTML = '';
 
-  const receipts = await listReceipts();
-  const approvedReceipts = receipts.filter((receipt) => receipt.status === 'approved');
-  const deniedReceipts = receipts.filter((receipt) => receipt.status === 'denied');
+  const backBtn = document.createElement('button');
+  backBtn.className = 'pill tiny';
+  backBtn.type = 'button';
+  backBtn.textContent = 'Back';
+  backBtn.addEventListener('click', renderReportPicker);
+  viewActions.appendChild(backBtn);
 
   const container = document.createElement('div');
   container.className = 'section-stack';
-
-  const timeStatusCard = document.createElement('div');
-  timeStatusCard.className = 'card section-stack';
-  timeStatusCard.innerHTML = '<h3>Time Status</h3>';
-
-  const events = loadStoredList(STORAGE_KEYS.timeStatus);
-  const users = (state.boot?.users || []).slice().sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
-  const helpers = Array.from(new Set(events.flatMap((event) => event.helpers || []))).sort();
-  const statuses = Array.from(new Set(events.map((event) => event.status || '').filter(Boolean))).sort();
-
-  const techSelect = document.createElement('select');
-  techSelect.innerHTML = `<option value="">All Techs</option>${users.map((user) => `<option value="${user.id}">${escapeHtml(user.full_name || 'Tech')}</option>`).join('')}`;
-  const helperSelect = document.createElement('select');
-  helperSelect.innerHTML = `<option value="">All Helpers</option>${helpers.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
-  const statusSelect = document.createElement('select');
-  statusSelect.innerHTML = `<option value="">All Statuses</option>${statuses.map((name) => `<option value="${escapeHtml(name)}">${statusLabel(name)}</option>`).join('')}`;
-
-  const rangeSelect = document.createElement('select');
-  rangeSelect.innerHTML = `
-    <option value="ytd">Year-to-date</option>
-    <option value="custom">Custom range</option>
-  `;
-
-  const startInput = document.createElement('input');
-  startInput.type = 'date';
-  const endInput = document.createElement('input');
-  endInput.type = 'date';
-
-  const now = new Date();
-  startInput.value = formatDateInput(new Date(now.getFullYear(), 0, 1));
-  endInput.value = formatDateInput(now);
-
-  const timeResults = document.createElement('div');
-  timeResults.className = 'section-stack';
-
-  const updateTimeStatusResults = () => {
-    const rangeType = rangeSelect.value;
-    const range = rangeType === 'custom'
-      ? { start: startInput.value, end: endInput.value }
-      : { start: new Date(now.getFullYear(), 0, 1).toISOString(), end: now.toISOString() };
-
-    const filtered = filterEventsByDate(events, range).filter((event) => {
-      if (techSelect.value && event.techId !== techSelect.value) return false;
-      if (helperSelect.value && !(event.helpers || []).includes(helperSelect.value)) return false;
-      if (statusSelect.value && event.status !== statusSelect.value) return false;
-      return true;
-    });
-
-    const totals = filtered.reduce((acc, event) => {
-      const start = new Date(event.startedAt).getTime();
-      const end = new Date(event.endedAt || Date.now()).getTime();
-      if (Number.isNaN(start) || Number.isNaN(end)) return acc;
-      const seconds = Math.max(0, Math.floor((end - start) / 1000));
-      const key = event.status || 'unknown';
-      acc[key] = (acc[key] || 0) + seconds;
-      return acc;
-    }, {});
-
-    const summary = Object.entries(totals)
-      .sort((a, b) => b[1] - a[1])
-      .map(([status, totalSeconds]) => `
-        <div class="pill">
-          <div>
-            <strong>${statusLabel(status)}</strong>
-            <div class="muted">Total time</div>
-          </div>
-          <span class="badge">${formatElapsed(totalSeconds)}</span>
-        </div>
-      `)
-      .join('');
-
-    timeResults.innerHTML = summary || '<div class="muted">No time status entries for this filter.</div>';
-  };
-
-  [techSelect, helperSelect, statusSelect, rangeSelect, startInput, endInput].forEach((node) => {
-    node.addEventListener('change', updateTimeStatusResults);
-  });
-
-  const filterRow = document.createElement('div');
-  filterRow.className = 'form-grid';
+  
   const fieldWrap = (labelText, inputEl) => {
     const wrap = document.createElement('div');
     const label = document.createElement('label');
@@ -3699,179 +3650,273 @@ async function renderReports() {
     wrap.append(label, inputEl);
     return wrap;
   };
-  filterRow.append(
-    fieldWrap('Tech', techSelect),
-    fieldWrap('Helper', helperSelect),
-    fieldWrap('Status', statusSelect),
-    fieldWrap('Date Range', rangeSelect),
-  );
+  
+  if (reportId === 'time-status') {
+    const timeStatusCard = document.createElement('div');
+    timeStatusCard.className = 'card section-stack';
+    timeStatusCard.innerHTML = '<h3>Time Status</h3>';
 
-  const rangeRow = document.createElement('div');
-  rangeRow.className = 'form-grid';
-  rangeRow.append(fieldWrap('Start', startInput), fieldWrap('End', endInput));
+    const events = loadStoredList(STORAGE_KEYS.timeStatus);
+    const users = (state.boot?.users || []).slice().sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+    const helpers = Array.from(new Set(events.flatMap((event) => event.helpers || []))).sort();
+    const statuses = Array.from(new Set(events.map((event) => event.status || '').filter(Boolean))).sort();
 
-  timeStatusCard.append(filterRow, rangeRow, timeResults);
-  container.appendChild(timeStatusCard);
-  updateTimeStatusResults();
+    const techSelect = document.createElement('select');
+    techSelect.innerHTML = `<option value="">All Techs</option>${users.map((user) => `<option value="${user.id}">${escapeHtml(user.full_name || 'Tech')}</option>`).join('')}`;
+    const helperSelect = document.createElement('select');
+    helperSelect.innerHTML = `<option value="">All Helpers</option>${helpers.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}`;
+    const statusSelect = document.createElement('select');
+    statusSelect.innerHTML = `<option value="">All Statuses</option>${statuses.map((name) => `<option value="${escapeHtml(name)}">${statusLabel(name)}</option>`).join('')}`;
 
-  const inventoryCard = document.createElement('div');
-  inventoryCard.className = 'card section-stack';
-  inventoryCard.innerHTML = '<h3>Inventory Event</h3>';
-  const inventoryEvents = loadStoredList(STORAGE_KEYS.inventoryEvents);
-  const inventoryResolved = loadStoredList(STORAGE_KEYS.inventoryResolved);
+    const rangeSelect = document.createElement('select');
+    rangeSelect.innerHTML = `
+      <option value="ytd">Year-to-date</option>
+      <option value="custom">Custom range</option>
+    `;
 
-  const inventoryList = document.createElement('div');
-  inventoryList.className = 'section-stack';
+    const startInput = document.createElement('input');
+    startInput.type = 'date';
+    const endInput = document.createElement('input');
+    endInput.type = 'date';
 
-  if (!inventoryEvents.length) {
-    inventoryList.innerHTML = '<div class="muted">No inventory events yet.</div>';
-  } else {
-    inventoryEvents.forEach((event) => {
-      const eventBlock = document.createElement('div');
-      eventBlock.className = 'card';
-      const header = document.createElement('div');
-      header.className = 'row space';
-      header.innerHTML = `
-        <div>
-          <strong>Inventory Event</strong>
-          <div class="muted">${formatDateTime(event.endedAt || event.startedAt)}</div>
-        </div>
-        <span class="badge">${event.counts?.length || 0} items</span>
-      `;
-      eventBlock.appendChild(header);
-      const list = document.createElement('div');
-      list.className = 'section-stack';
-      (event.counts || []).forEach((count) => {
-        if (count.resolvedAt) return;
-        const row = document.createElement('label');
+    const now = new Date();
+    startInput.value = formatDateInput(new Date(now.getFullYear(), 0, 1));
+    endInput.value = formatDateInput(now);
+
+    const timeResults = document.createElement('div');
+    timeResults.className = 'section-stack';
+
+    const updateTimeStatusResults = () => {
+      const rangeType = rangeSelect.value;
+      const range = rangeType === 'custom'
+        ? { start: startInput.value, end: endInput.value }
+        : { start: new Date(now.getFullYear(), 0, 1).toISOString(), end: now.toISOString() };
+
+      const filtered = filterEventsByDate(events, range).filter((event) => {
+        if (techSelect.value && event.techId !== techSelect.value) return false;
+        if (helperSelect.value && !(event.helpers || []).includes(helperSelect.value)) return false;
+        if (statusSelect.value && event.status !== statusSelect.value) return false;
+        return true;
+      });
+
+      const totals = filtered.reduce((acc, event) => {
+        const start = new Date(event.startedAt).getTime();
+        const end = new Date(event.endedAt || Date.now()).getTime();
+        if (Number.isNaN(start) || Number.isNaN(end)) return acc;
+        const seconds = Math.max(0, Math.floor((end - start) / 1000));
+        const key = event.status || 'unknown';
+        acc[key] = (acc[key] || 0) + seconds;
+        return acc;
+      }, {});
+
+      const summary = Object.entries(totals)
+        .sort((a, b) => b[1] - a[1])
+        .map(([status, totalSeconds]) => `
+          <div class="pill">
+            <div>
+              <strong>${statusLabel(status)}</strong>
+              <div class="muted">Total time</div>
+            </div>
+            <span class="badge">${formatElapsed(totalSeconds)}</span>
+          </div>
+        `)
+        .join('');
+
+      timeResults.innerHTML = summary || '<div class="muted">No time status entries for this filter.</div>';
+    };
+
+    [techSelect, helperSelect, statusSelect, rangeSelect, startInput, endInput].forEach((node) => {
+      node.addEventListener('change', updateTimeStatusResults);
+    });
+
+    const filterRow = document.createElement('div');
+    filterRow.className = 'form-grid';
+    filterRow.append(
+      fieldWrap('Tech', techSelect),
+      fieldWrap('Helper', helperSelect),
+      fieldWrap('Status', statusSelect),
+      fieldWrap('Date Range', rangeSelect),
+    );
+
+    const rangeRow = document.createElement('div');
+    rangeRow.className = 'form-grid';
+    rangeRow.append(fieldWrap('Start', startInput), fieldWrap('End', endInput));
+
+    timeStatusCard.append(filterRow, rangeRow, timeResults);
+    container.appendChild(timeStatusCard);
+    updateTimeStatusResults();
+  }
+
+  if (reportId === 'inventory') {
+    const inventoryCard = document.createElement('div');
+    inventoryCard.className = 'card section-stack';
+    inventoryCard.innerHTML = '<h3>Inventory Events</h3>';
+    const inventoryEvents = loadStoredList(STORAGE_KEYS.inventoryEvents);
+    const inventoryResolved = loadStoredList(STORAGE_KEYS.inventoryResolved);
+
+    const inventoryList = document.createElement('div');
+    inventoryList.className = 'section-stack';
+
+    if (!inventoryEvents.length) {
+      inventoryList.innerHTML = '<div class="muted">No inventory events yet.</div>';
+    } else {
+      inventoryEvents.forEach((event) => {
+        const eventBlock = document.createElement('div');
+        eventBlock.className = 'card';
+        const header = document.createElement('div');
+        header.className = 'row space';
+        header.innerHTML = `
+          <div>
+            <strong>Inventory Event</strong>
+            <div class="muted">${formatDateTime(event.endedAt || event.startedAt)}</div>
+          </div>
+          <span class="badge">${event.counts?.length || 0} items</span>
+        `;
+        eventBlock.appendChild(header);
+        const list = document.createElement('div');
+        list.className = 'section-stack';
+        (event.counts || []).forEach((count) => {
+          if (count.resolvedAt) return;
+          const row = document.createElement('label');
+          row.className = 'pill';
+          row.innerHTML = `
+            <div>
+              <strong>${escapeHtml(count.name || count.sku || 'Part')}</strong>
+              <div class="muted">Physical: ${count.physicalQty ?? 0} • Counted ${formatDateTime(count.at)}</div>
+            </div>
+            <span class="badge">Resolve <input type="checkbox" data-session="${event.id}" data-bin="${count.binId}" /></span>
+          `;
+          list.appendChild(row);
+        });
+        eventBlock.appendChild(list);
+        inventoryList.appendChild(eventBlock);
+      });
+    }
+
+    inventoryCard.appendChild(inventoryList);
+    container.appendChild(inventoryCard);
+
+    const resolvedCard = document.createElement('div');
+    resolvedCard.className = 'card section-stack';
+    resolvedCard.innerHTML = '<h3>Inventory Resolved</h3>';
+
+    const exportResolvedBtn = document.createElement('button');
+    exportResolvedBtn.className = 'pill';
+    exportResolvedBtn.textContent = 'Export CSV';
+    exportResolvedBtn.addEventListener('click', () => {
+      exportCsv(inventoryResolved, 'inventory-resolved', [
+        { key: 'sku' },
+        { key: 'name' },
+        { key: 'physicalQty' },
+        { key: 'countedAt' },
+        { key: 'resolvedAt' },
+      ]);
+    });
+    resolvedCard.appendChild(exportResolvedBtn);
+
+    const resolvedList = document.createElement('div');
+    resolvedList.className = 'section-stack';
+    if (!inventoryResolved.length) {
+      resolvedList.innerHTML = '<div class="muted">No resolved inventory items yet.</div>';
+    } else {
+      inventoryResolved.forEach((item) => {
+        const row = document.createElement('div');
         row.className = 'pill';
         row.innerHTML = `
           <div>
-            <strong>${escapeHtml(count.name || count.sku || 'Part')}</strong>
-            <div class="muted">Physical: ${count.physicalQty ?? 0} • Counted ${formatDateTime(count.at)}</div>
+         <strong>${escapeHtml(item.name || item.sku || 'Part')}</strong>
+            <div class="muted">Counted ${formatDateTime(item.countedAt)} • Resolved ${formatDateTime(item.resolvedAt)}</div>
           </div>
-          <span class="badge">Resolve <input type="checkbox" data-session="${event.id}" data-bin="${count.binId}" /></span>
+            <span class="badge">${item.physicalQty ?? 0}</span>
         `;
-        list.appendChild(row);
+         resolvedList.appendChild(row);
+      });
+    }
+    resolvedCard.appendChild(resolvedList);
+    container.appendChild(resolvedCard);
+
+    inventoryList.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+      checkbox.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!target.checked) return;
+        const sessionId = target.dataset.session;
+        const binId = target.dataset.bin;
+        const eventIndex = inventoryEvents.findIndex((evt) => evt.id === sessionId);
+        if (eventIndex < 0) return;
+        const eventData = inventoryEvents[eventIndex];
+        const item = (eventData.counts || []).find((count) => count.binId === binId);
+        if (!item) return;
+        item.resolvedAt = new Date().toISOString();
+        const resolvedEntry = {
+          id: `${sessionId}-${binId}-${Date.now()}`,
+          sku: item.sku,
+          name: item.name,
+          physicalQty: item.physicalQty,
+          countedAt: item.at,
+          resolvedAt: item.resolvedAt,
+          sessionId,
+        };
+        inventoryResolved.unshift(resolvedEntry);
+        saveStoredList(STORAGE_KEYS.inventoryResolved, inventoryResolved);
+        saveStoredList(STORAGE_KEYS.inventoryEvents, inventoryEvents);
+        renderReportDetail('inventory');
       });
       eventBlock.appendChild(list);
       inventoryList.appendChild(eventBlock);
     });
   }
 
-  inventoryCard.appendChild(inventoryList);
-  container.appendChild(inventoryCard);
+ if (reportId === 'receipts') {
+    const receipts = await listReceipts();
+    const approvedReceipts = receipts.filter((receipt) => receipt.status === 'approved');
+    const deniedReceipts = receipts.filter((receipt) => receipt.status === 'denied');
 
-  const resolvedCard = document.createElement('div');
-  resolvedCard.className = 'card section-stack';
-  resolvedCard.innerHTML = '<h3>Inventory Resolved</h3>';
-
-  const exportResolvedBtn = document.createElement('button');
-  exportResolvedBtn.className = 'pill';
-  exportResolvedBtn.textContent = 'Export CSV';
-  exportResolvedBtn.addEventListener('click', () => {
-    exportCsv(inventoryResolved, 'inventory-resolved', [
-      { key: 'sku' },
-      { key: 'name' },
-      { key: 'physicalQty' },
-      { key: 'countedAt' },
-      { key: 'resolvedAt' },
-    ]);
-  });
-  resolvedCard.appendChild(exportResolvedBtn);
-
-  const resolvedList = document.createElement('div');
-  resolvedList.className = 'section-stack';
-  if (!inventoryResolved.length) {
-    resolvedList.innerHTML = '<div class="muted">No resolved inventory items yet.</div>';
-  } else {
-    inventoryResolved.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'pill';
-      row.innerHTML = `
-        <div>
-          <strong>${escapeHtml(item.name || item.sku || 'Part')}</strong>
-          <div class="muted">Counted ${formatDateTime(item.countedAt)} • Resolved ${formatDateTime(item.resolvedAt)}</div>
-        </div>
-        <span class="badge">${item.physicalQty ?? 0}</span>
-      `;
-      resolvedList.appendChild(row);
-    });
-  }
-  resolvedCard.appendChild(resolvedList);
-  container.appendChild(resolvedCard);
-
-   const receiptCard = document.createElement('div');
-  receiptCard.className = 'card section-stack';
-  receiptCard.innerHTML = '<h3>Receipt Decisions</h3>';
-  const receiptLists = document.createElement('div');
-  receiptLists.className = 'section-stack';
-  const renderReceiptList = (title, items, badgeClass) => {
-    const block = document.createElement('div');
-    block.className = 'section-stack';
-    const heading = document.createElement('div');
-    heading.className = 'section-title';
-    heading.textContent = title;
-    block.appendChild(heading);
-    if (!items.length) {
-      block.innerHTML += '<div class="muted">No receipts yet.</div>';
+    const receiptCard = document.createElement('div');
+    receiptCard.className = 'card section-stack';
+    receiptCard.innerHTML = '<h3>Receipt Decisions</h3>';
+    const receiptLists = document.createElement('div');
+    receiptLists.className = 'section-stack';
+    const renderReceiptList = (title, items, badgeClass) => {
+      const block = document.createElement('div');
+      block.className = 'section-stack';
+      const heading = document.createElement('div');
+      heading.className = 'section-title';
+      heading.textContent = title;
+      block.appendChild(heading);
+      if (!items.length) {
+        block.innerHTML += '<div class="muted">No receipts yet.</div>';
+        return block;
+      }
+      items.forEach((receipt) => {
+        const row = document.createElement('div');
+        row.className = 'pill list-row';
+        const total = receipt.total_cost ? `$${Number(receipt.total_cost).toFixed(2)}` : '--';
+        row.innerHTML = `
+          <div class="row-main">
+            <div class="row-title">${escapeHtml(receipt.receipt_type || 'Receipt')}</div>
+            <div class="row-sub muted">${new Date(receipt.created_at).toLocaleString()}</div>
+            <div class="row-sub">${escapeHtml(receipt.users?.full_name || receipt.tech_id || 'Tech')} • ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
+          </div>
+          <div class="row-meta">
+            <span class="badge ${badgeClass}">${total}</span>
+          </div>
+        `;
+        block.appendChild(row);
+      });
       return block;
-    }
-    items.forEach((receipt) => {
-      const row = document.createElement('div');
-      row.className = 'pill list-row';
-      const total = receipt.total_cost ? `$${Number(receipt.total_cost).toFixed(2)}` : '--';
-      row.innerHTML = `
-        <div class="row-main">
-          <div class="row-title">${escapeHtml(receipt.receipt_type || 'Receipt')}</div>
-          <div class="row-sub muted">${new Date(receipt.created_at).toLocaleString()}</div>
-          <div class="row-sub">${escapeHtml(receipt.users?.full_name || receipt.tech_id || 'Tech')} • ${escapeHtml(receipt.trucks?.truck_identifier || receipt.truck_id || '--')}</div>
-        </div>
-        <div class="row-meta">
-          <span class="badge ${badgeClass}">${total}</span>
-        </div>
-      `;
-      block.appendChild(row);
-    });
-    return block;
-  };
+    };
 
   receiptLists.append(
-    renderReceiptList('Approved', approvedReceipts, 'success'),
-    renderReceiptList('Denied', deniedReceipts, 'danger'),
-  );
-  receiptCard.appendChild(receiptLists);
-  container.appendChild(receiptCard);
+      renderReceiptList('Approved', approvedReceipts, 'success'),
+      renderReceiptList('Denied', deniedReceipts, 'danger'),
+    );
+    receiptCard.appendChild(receiptLists);
+    container.appendChild(receiptCard);
+  }
+ 
   viewContainer.innerHTML = '';
   viewContainer.appendChild(container);
 
-  inventoryList.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
-    checkbox.addEventListener('change', (event) => {
-      const target = event.target;
-      if (!target.checked) return;
-      const sessionId = target.dataset.session;
-      const binId = target.dataset.bin;
-      const eventIndex = inventoryEvents.findIndex((evt) => evt.id === sessionId);
-      if (eventIndex < 0) return;
-      const eventData = inventoryEvents[eventIndex];
-      const item = (eventData.counts || []).find((count) => count.binId === binId);
-      if (!item) return;
-      item.resolvedAt = new Date().toISOString();
-      const resolvedEntry = {
-        id: `${sessionId}-${binId}-${Date.now()}`,
-        sku: item.sku,
-        name: item.name,
-        physicalQty: item.physicalQty,
-        countedAt: item.at,
-        resolvedAt: item.resolvedAt,
-        sessionId,
-      };
-      inventoryResolved.unshift(resolvedEntry);
-      saveStoredList(STORAGE_KEYS.inventoryResolved, inventoryResolved);
-      saveStoredList(STORAGE_KEYS.inventoryEvents, inventoryEvents);
-      renderReports();
-    });
-  });
 }
 
 const viewHandlers = {

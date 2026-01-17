@@ -469,13 +469,10 @@ function renderDrawer() {
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       toggleDrawer(false);
-       if (action === 'start-inventory') return startInventoryInApp();
+      if (action === 'start-inventory') return startInventoryInApp();
       if (action === 'inshop') return setTechInshopStatus();
       if (action === 'current') return renderInventory();
-      if (action === 'perform-inventory') {
-        window.open('../inventory-app/inventory.html?startInventory=1', '_blank', 'noopener');
-        return;
-      }
+      if (action === 'perform-inventory') return startInventoryInApp();
       if (action === 'in-shop') {
         const active = getActiveInShopEvent();
         if (active) {
@@ -511,7 +508,8 @@ function toggleDrawer(show) {
 function startInventoryInApp() {
   const url = new URL('../inventory-app/inventory.html', window.location.href);
   url.searchParams.set('startInventory', '1');
-  window.location.href = url.toString();
+ url.searchParams.set('route', 'inventory');
+  window.open(url.toString(), '_blank', 'noopener');
 }
 
 async function setTechInshopStatus() {
