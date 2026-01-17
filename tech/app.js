@@ -1111,7 +1111,7 @@ async function renderTechMap() {
     `;
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
-    openBtn.className = 'pill inline';
+    openBtn.className = 'pill inline map-open-job';
     openBtn.textContent = 'Open Job';
     openBtn.addEventListener('click', () => {
       map.closePopup();

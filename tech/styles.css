@@ -334,6 +334,11 @@ transform: translateY(1px) scale(0.99);
   border-color: rgba(39, 174, 96, 0.45);
 }
 
+.pill.map-open-job {
+  background: linear-gradient(180deg, rgba(39, 174, 96, 0.98), rgba(39, 174, 96, 0.72));
+  border-color: rgba(39, 174, 96, 0.45);
+}
+
 .list {
   display: grid;
   gap: 12px;
