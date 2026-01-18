@@ -1140,7 +1140,7 @@ button.action.wide{
   inset: 0;
   display:grid;
   place-items:center;
-  z-index: 50;
+  z-index: 2000;
 }
 .modal[hidden]{ display:none; }
 .modal-scrim{
@@ -1161,7 +1161,7 @@ button.action.wide{
   border: 1px solid rgba(255,255,255,.12);
   background: linear-gradient(180deg, rgba(20,24,33,.96), rgba(15,18,25,.94));
   box-shadow: 0 20px 60px rgba(0,0,0,.55);
-  z-index: 51;
+  z-index: 2001;
 }
 .modal-body{
   overflow: auto;
@@ -1276,6 +1276,17 @@ button.action.wide{
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.receipt-row .row-main{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.receipt-row .row-title{
+  min-width: 140px;
 }
 
 .pill-x{
