@@ -1,8 +1,32 @@
-export const DEFAULT_CONFIG ={
+export const DEFAULT_CONFIG = {
   supabaseUrl: 'https://evdjfpzxirsuryawjtql.supabase.co',
   supabaseAnonKey: 'sb_publishable_DM1LTYa35ycFbloXyDofSw_PDDGKdrm',
   orgId: '11111111-1111-1111-1111-111111111111',
+};
+
+function normalizeConfigValue(value) {
+  if (value === undefined || value === null) return '';
+  if (value === 'null' || value === 'undefined') return '';
+  return value;
 }
+
+function safeGetItem(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (error) {
+    console.warn('Config storage read failed', error);
+    return null;
+  }
+}
+
+function safeSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    console.warn('Config storage write failed', error);
+  }
+}
+
 export function getConfig() {
   const fromEnv = {
     supabaseUrl: window.SUPABASE_URL,
@@ -12,16 +36,33 @@ export function getConfig() {
   };
 
   const fromStorage = {
-    supabaseUrl: localStorage.getItem('SUPABASE_URL'),
-    supabaseAnonKey: localStorage.getItem('SUPABASE_ANON_KEY'),
-    orgId: localStorage.getItem('ORG_ID'),
+     supabaseUrl: safeGetItem('SUPABASE_URL'),
+    supabaseAnonKey: safeGetItem('SUPABASE_ANON_KEY'),
+    orgId: safeGetItem('ORG_ID'),
   };
 
- const supabaseUrl =
-    fromEnv.supabaseUrl || fromStorage.supabaseUrl || DEFAULT_CONFIG.supabaseUrl || '';
-  const supabaseAnonKey =
-    fromEnv.supabaseAnonKey || fromStorage.supabaseAnonKey || DEFAULT_CONFIG.supabaseAnonKey || '';
-  const orgId = fromEnv.orgId || fromStorage.orgId || DEFAULT_CONFIG.orgId || '';
+ let supabaseUrl = normalizeConfigValue(fromEnv.supabaseUrl)
+    || normalizeConfigValue(fromStorage.supabaseUrl)
+    || DEFAULT_CONFIG.supabaseUrl
+    || '';
+  let supabaseAnonKey = normalizeConfigValue(fromEnv.supabaseAnonKey)
+    || normalizeConfigValue(fromStorage.supabaseAnonKey)
+    || DEFAULT_CONFIG.supabaseAnonKey
+    || '';
+  let orgId = normalizeConfigValue(fromEnv.orgId)
+    || normalizeConfigValue(fromStorage.orgId)
+    || DEFAULT_CONFIG.orgId
+    || '';
+
+  if (supabaseUrl) {
+    safeSetItem('SUPABASE_URL', supabaseUrl);
+  }
+  if (supabaseAnonKey) {
+    safeSetItem('SUPABASE_ANON_KEY', supabaseAnonKey);
+  }
+  if (orgId) {
+    safeSetItem('ORG_ID', orgId);
+  }
 
   return {
     supabaseUrl,
@@ -32,15 +73,15 @@ export function getConfig() {
 
 export function saveConfig({ supabaseUrl, supabaseAnonKey, orgId, googleMapsApiKey }) {
   if (supabaseUrl) {
-    localStorage.setItem('SUPABASE_URL', supabaseUrl);
+    safeSetItem('SUPABASE_URL', supabaseUrl);
   }
   if (supabaseAnonKey) {
-    localStorage.setItem('SUPABASE_ANON_KEY', supabaseAnonKey);
+   safeSetItem('SUPABASE_ANON_KEY', supabaseAnonKey);
   }
   if (orgId) {
-    localStorage.setItem('ORG_ID', orgId);
+    safeSetItem('ORG_ID', orgId);
   }
    if (googleMapsApiKey) {
-    localStorage.setItem('GOOGLE_MAPS_API_KEY', googleMapsApiKey);
+    safeSetItem('GOOGLE_MAPS_API_KEY', googleMapsApiKey);
   }
 }
