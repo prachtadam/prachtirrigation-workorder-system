@@ -56,6 +56,7 @@ const mapState = {
 
 const STORAGE_KEYS = {
   timeStatus: 'time_status_events',
+  bootCache: 'TECH_BOOT_CACHE',
 };
 
 function loadTimeStatusEvents() {
@@ -72,6 +73,24 @@ function saveTimeStatusEvents(events) {
   localStorage.setItem(STORAGE_KEYS.timeStatus, JSON.stringify(events));
 }
 
+function loadBootCache() {
+  const raw = localStorage.getItem(STORAGE_KEYS.bootCache);
+  if (!raw) return null;
+  try {
+    const cached = JSON.parse(raw);
+    return cached?.boot || null;
+  } catch (error) {
+    console.warn('Boot cache parse error', error);
+    return null;
+  }
+}
+
+function saveBootCache(boot) {
+  localStorage.setItem(
+    STORAGE_KEYS.bootCache,
+    JSON.stringify({ boot, savedAt: new Date().toISOString() })
+  );
+}
 function getActiveInShopEvent() {
   if (!state.tech?.id) return null;
   const events = loadTimeStatusEvents();
@@ -173,7 +192,22 @@ function setTruck(truckId) {
 }
 
 async function loadBoot() {
-  state.boot = await getBootData();
+  try {
+    const boot = await getBootData();
+    state.boot = boot;
+    saveBootCache(boot);
+  } catch (error) {
+    const cached = loadBootCache();
+    if (cached) {
+      state.boot = cached;
+      showToast('Offline mode: using cached data.');
+      return;
+    }
+    if (isOffline()) {
+      throw new Error('Offline data not available. Sign in online first.');
+    }
+    throw error;
+  }
 }
 
 function isOffline() {
