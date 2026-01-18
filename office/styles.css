@@ -300,6 +300,13 @@ strong{ font-weight: 900; letter-spacing: .2px; }
   border-color: var(--border-2);
 }
 
+.hamburger-logo{
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-8);
+  object-fit: cover;
+}
+
 .hamburger span{
   display:block;
   width: 18px;

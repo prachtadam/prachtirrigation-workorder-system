@@ -1,5 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { getConfig } from './config.js';
+import { getConfig, DEFAULT_CONFIG } from './config.js';
 import { JOB_STATUSES } from './types.js';
 
 let client;
@@ -9,10 +9,12 @@ let jobStatusRpcSupported;
 function getClient() {
   if (client) return client;
   const { supabaseUrl, supabaseAnonKey } = getConfig();
-  if (!supabaseUrl || !supabaseAnonKey) {
+  const resolvedSupabaseUrl = supabaseUrl || DEFAULT_CONFIG.supabaseUrl;
+  const resolvedSupabaseAnonKey = supabaseAnonKey || DEFAULT_CONFIG.supabaseAnonKey;
+  if (!resolvedSupabaseUrl || !resolvedSupabaseAnonKey) {
     throw new Error('Supabase configuration missing. Please set SUPABASE_URL and SUPABASE_ANON_KEY.');
   }
-  client = createClient(supabaseUrl, supabaseAnonKey);
+  client = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey);
   return client;
 }
 
@@ -35,7 +37,9 @@ async function checkJobStatusRpcSupport() {
   if (jobStatusRpcSupported !== undefined) return jobStatusRpcSupported;
  
   const { supabaseUrl, supabaseAnonKey } = getConfig();
-  if (!supabaseUrl || !supabaseAnonKey) {
+  const resolvedSupabaseUrl = supabaseUrl || DEFAULT_CONFIG.supabaseUrl;
+  const resolvedSupabaseAnonKey = supabaseAnonKey || DEFAULT_CONFIG.supabaseAnonKey;
+  if (!resolvedSupabaseUrl || !resolvedSupabaseAnonKey) {
     jobStatusRpcSupported = false;
     return jobStatusRpcSupported;
   }

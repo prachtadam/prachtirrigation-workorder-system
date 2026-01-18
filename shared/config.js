@@ -1,4 +1,4 @@
-const HARDCODED_CONFIG ={
+export const DEFAULT_CONFIG ={
   supabaseUrl: 'https://evdjfpzxirsuryawjtql.supabase.co',
   supabaseAnonKey: 'sb_publishable_DM1LTYa35ycFbloXyDofSw_PDDGKdrm',
   orgId: '11111111-1111-1111-1111-111111111111',
@@ -18,10 +18,10 @@ export function getConfig() {
   };
 
  const supabaseUrl =
-    fromEnv.supabaseUrl || fromStorage.supabaseUrl || HARDCODED_CONFIG.supabaseUrl || '';
+    fromEnv.supabaseUrl || fromStorage.supabaseUrl || DEFAULT_CONFIG.supabaseUrl || '';
   const supabaseAnonKey =
-    fromEnv.supabaseAnonKey || fromStorage.supabaseAnonKey || HARDCODED_CONFIG.supabaseAnonKey || '';
-  const orgId = fromEnv.orgId || fromStorage.orgId || HARDCODED_CONFIG.orgId || '';
+    fromEnv.supabaseAnonKey || fromStorage.supabaseAnonKey || DEFAULT_CONFIG.supabaseAnonKey || '';
+  const orgId = fromEnv.orgId || fromStorage.orgId || DEFAULT_CONFIG.orgId || '';
 
   return {
     supabaseUrl,
