@@ -140,44 +140,29 @@ function exportCsvTemplate(filePrefix, fields) {
 }
 
 function parseCsvText(text) {
-   if (!text) return null;
+  if (!text) return null;
   const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  const rows = [];
-  let current = '';
-  let currentRow = [];
-  let inQuotes = false;
-  for (let i = 0; i < normalized.length; i += 1) {
-    const char = normalized[i];
-    const nextChar = normalized[i + 1];
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        current += '"';
-        i += 1;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === ',' && !inQuotes) {
-      currentRow.push(current);
-      current = '';
-    } else if (char === '\n' && !inQuotes) {
-      currentRow.push(current);
-      rows.push(currentRow);
-      current = '';
-      currentRow = [];
-    } else {
-      current += char;
-    }
+  if (!window.Papa) {
+    showToast('Import failed: CSV parser not available.');
+    return null;
   }
-  if (current.length || currentRow.length) {
-    currentRow.push(current);
-    rows.push(currentRow);
+   // The previous hand-rolled parser dropped literal quote characters by treating them as
+  // CSV delimiters. Papa Parse preserves exact cell text, including quotes and commas.
+  const result = window.Papa.parse(normalized, {
+    header: false,
+    skipEmptyLines: false,
+    dynamicTyping: false,
+  });
+  if (result.errors?.length) {
+    console.warn('CSV parse warnings', result.errors);
   }
-
-  const nonEmptyRows = rows.filter((row) => row.some((cell) => `${cell ?? ''}`.trim()));
-  if (!nonEmptyRows.length) return null;
+const rows = result.data || [];
+  const nonEmptyRows = rows.filter((row) => row.some((cell) => `${cell ?? ''}` !== ''));
+   if (!nonEmptyRows.length) return null;
   const [headerRow, ...dataRows] = nonEmptyRows;
-  const headers = headerRow.map((header) => `${header ?? ''}`.trim());
+  const headers = headerRow.map((header) => `${header ?? ''}`);
   const parsedRows = dataRows.map((row) => row.map((value) => `${value ?? ''}`));
+  console.info('Import parse preview', {headers, rows: parsedRows.slice(0, 10) });
   return { headers, rows: parsedRows };
 }
 
@@ -196,17 +181,23 @@ async function parseFile(file) {
       return null;
     }
     const data = await file.arrayBuffer();
-    const workbook = window.XLSX.read(data, { type: 'array' });
+    const workbook = window.XLSX.read(data, { type: 'array', raw: true });
     const sheetName = workbook.SheetNames?.[0];
     if (!sheetName) return null;
     const sheet = workbook.Sheets[sheetName];
-    const sheetRows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+   const sheetRows = window.XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      blankrows: false,
+      raw: true,
+      defval: '',
+    });
     const [headerRow, ...rows] = sheetRows.filter((row) =>
-      Array.isArray(row) && row.some((cell) => `${cell ?? ''}`.trim()),
+      Array.isArray(row) && row.some((cell) => `${cell ?? ''}` !==''),
     );
     if (!headerRow) return null;
-    const headers = headerRow.map((cell) => `${cell ?? ''}`.trim());
-   const parsedRows = rows.map((row) => row.map((value) => `${value ?? ''}`));
+    const headers = headerRow.map((cell) => `${cell ?? ''}`);
+    const parsedRows = rows.map((row) => row.map((value) => `${value ?? ''}`));
+    console.info('Import parse preview', { headers, rows: parsedRows.slice(0, 10) });
     return { headers, rows: parsedRows };
   }
 
@@ -218,7 +209,7 @@ function validateRow(row, index, headers = []) {
   if (!Array.isArray(row)) {
     return { ok: false, cleanedRow: [], error: `Row ${index} is not a list.` };
   }
-  const cleaned = row.map((value) => `${value ?? ''}`.replace(/\r/g, '').trim());
+  const cleaned = row.map((value) => `${value ?? ''}`.replace(/\r/g, ''));
   if (!cleaned.some((value) => value)) {
     return { ok: false, cleanedRow: cleaned, error: 'Empty row.' };
   }
@@ -282,6 +273,63 @@ function recordFailedImportLine(failedRows, lineNumber, values, reason) {
   });
 }
 
+function getHeaderIndex(headers, key) {
+  const target = key?.toLowerCase();
+  if (!target) return -1;
+  return headers.findIndex((header) => `${header}`.toLowerCase() === target);
+}
+
+async function showImportPreview(headers, rows) {
+  const nameIndex = getHeaderIndex(headers, 'name');
+  const previewRows = rows.slice(0, 10);
+  const body = document.createElement('div');
+  body.className = 'modal-body section-stack';
+
+  const note = document.createElement('div');
+  note.className = 'muted';
+  note.textContent = 'Import preview (first 10 rows). Confirm the name field matches the file exactly.';
+  body.appendChild(note);
+
+  const list = document.createElement('ul');
+  list.className = 'section-stack';
+  previewRows.forEach((row, index) => {
+    const item = document.createElement('li');
+    const value = nameIndex >= 0 ? row[nameIndex] : row[0];
+    item.textContent = `Row ${index + 1}: ${value ?? ''}`;
+    list.appendChild(item);
+  });
+  body.appendChild(list);
+
+  const actions = document.createElement('div');
+  actions.className = 'form-grid';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'pill tiny secondary';
+  cancelBtn.textContent = 'Cancel Import';
+  const continueBtn = document.createElement('button');
+  continueBtn.type = 'button';
+  continueBtn.className = 'pill tiny';
+  continueBtn.textContent = 'Continue Import';
+  actions.append(cancelBtn, continueBtn);
+  body.appendChild(actions);
+
+  return new Promise((resolve) => {
+    const { close } = openModalSimple({
+      title: 'Import Preview',
+      bodyEl: body,
+      onClose: () => resolve(false),
+    });
+    cancelBtn.addEventListener('click', () => {
+      close();
+      resolve(false);
+    });
+    continueBtn.addEventListener('click', () => {
+      close();
+      resolve(true);
+    });
+  });
+}
+
 async function importRows(rows, options = {}) {
   const {
     headers = [],
@@ -310,6 +358,10 @@ async function importRows(rows, options = {}) {
   const insertWithSplit = async (payloads, meta) => {
     if (!payloads.length) return;
     try {
+      console.info('Import insert payloads', {
+        count: payloads.length,
+        sample: payloads.slice(0, 10),
+      });
       await insertBatch(payloads);
       summary.inserted += payloads.length;
       lastSuccessfulLine = meta[meta.length - 1]?.lineNumber ?? lastSuccessfulLine;
@@ -426,9 +478,7 @@ function showImportReport({ title, totalRows, inserted, skipped, failedRows }) {
     list.className = 'section-stack';
     failedRows.forEach((row) => {
       const item = document.createElement('li');
-      const lineParts = [
-        `Line ${row.lineNumber}: ${row.values.map((value) => `${value}`.trim()).join(' | ')}`,
-      ];
+     const lineParts = [`Line ${row.lineNumber}: ${row.values.map((value) => `${value}`).join(' | ')}`];
       if (row.reason) lineParts.push(`Reason: ${row.reason}`);
       item.textContent = lineParts.join(' — ');
       list.appendChild(item);
@@ -528,7 +578,11 @@ async function handleImportCsv(event, fields, createHandler) {
     showToast('Import file is empty.');
     return;
   }
-
+ const shouldContinue = await showImportPreview(headers, rows);
+  if (!shouldContinue) {
+    event.target.value = '';
+    return;
+  }
   const fieldKeys = new Set(fields.map((field) => field.key));
   const tableMap = new Map([
     [createCustomer, 'customers'],
@@ -569,7 +623,7 @@ async function handleImportCsv(event, fields, createHandler) {
           payload[header] = cleanedRow[index] ?? '';
         }
       });
-      const hasValue = Object.values(payload).some((value) => `${value}`.trim());
+      const hasValue = Object.values(payload).some((value) => `${value}` !== '');
       if (!hasValue) {
         return { ok: false, error: 'Empty row.' };
       }
@@ -585,6 +639,26 @@ async function handleImportCsv(event, fields, createHandler) {
     skipped: summary.skipped,
     failedRows: summary.failedRows,
   });
+
+   const nameIndex = getHeaderIndex(headers, 'name');
+  if (tableName && nameIndex >= 0 && orgId) {
+    const previewNames = rows
+      .slice(0, 10)
+      .map((row) => row[nameIndex])
+      .filter((value) => `${value ?? ''}` !== '');
+    if (previewNames.length) {
+      const { data, error } = await client
+        .from(tableName)
+        .select('name')
+        .eq('org_id', orgId)
+        .in('name', previewNames);
+      if (error) {
+        console.warn('Import readback failed', error);
+      } else {
+        console.info('Import readback preview', data);
+      }
+    }
+  }
   event.target.value = '';
   await setView(state.currentView);
 }
@@ -600,6 +674,11 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   const { headers, rows } = parsed;
   if (!headers.length) {
     showToast('Import file is empty.');
+    return;
+  }
+  const shouldContinue = await showImportPreview(headers, rows);
+  if (!shouldContinue) {
+    event.target.value = '';
     return;
   }
   const productBySku = new Map();
@@ -632,12 +711,12 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
       headers.forEach((header, index) => {
         payload[header] = cleanedRow[index] ?? '';
       });
-      const hasValue = Object.values(payload).some((value) => `${value}`.trim());
+     const hasValue = Object.values(payload).some((value) => `${value}` !== '');
       if (!hasValue) {
         return { ok: false, error: 'Empty row.' };
       }
-    const sku = payload.sku?.trim();
-      const name = payload.name?.trim();
+    const sku = payload.sku ?? '';
+      const name = payload.name ?? '';
       const minRaw = payload.min_qty ?? payload.minimum_qty ?? payload.min;
       const parsedMin = Number(minRaw);
       let product = sku ? productBySku.get(sku.toLowerCase()) : null;
