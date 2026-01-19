@@ -1128,7 +1128,10 @@ button.action.wide{
 .sidebar-label{ margin-top: 10px; }
 
 .pill.tiny{ padding: 6px 10px !important; border-radius: 999px !important; font-size: 12px; }
-
+.import-status{
+  font-size: 12px;
+  margin-top: 8px;
+}
 .status-paused{ background: linear-gradient(180deg, rgba(249,115,22,.18), rgba(249,115,22,.08)) !important; border-color: rgba(249,115,22,.26) !important; }
 .status-progress{ background: linear-gradient(180deg, rgba(59,130,246,.18), rgba(59,130,246,.08)) !important; border-color: rgba(59,130,246,.26) !important; }
 .status-finished{ background: linear-gradient(180deg, rgba(168,85,247,.18), rgba(168,85,247,.08)) !important; border-color: rgba(168,85,247,.26) !important; }

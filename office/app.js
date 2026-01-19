@@ -140,16 +140,48 @@ function exportCsvTemplate(filePrefix, fields) {
 }
 
 function parseCsvText(text) {
-  const [headerRow, ...rows] = text.split(/\r?\n/).filter((line) => line.trim());
-  if (!headerRow) return null;
-  const headers = headerRow.split(',').map((header) => header.trim());
-  const parsedRows = rows.map((row) =>
-    row.split(',').map((value) => value.replace(/^\"|\"$/g, '').trim()),
-  );
+   if (!text) return null;
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const rows = [];
+  let current = '';
+  let currentRow = [];
+  let inQuotes = false;
+  for (let i = 0; i < normalized.length; i += 1) {
+    const char = normalized[i];
+    const nextChar = normalized[i + 1];
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      currentRow.push(current);
+      current = '';
+    } else if (char === '\n' && !inQuotes) {
+      currentRow.push(current);
+      rows.push(currentRow);
+      current = '';
+      currentRow = [];
+    } else {
+      current += char;
+    }
+  }
+  if (current.length || currentRow.length) {
+    currentRow.push(current);
+    rows.push(currentRow);
+  }
+
+  const nonEmptyRows = rows.filter((row) => row.some((cell) => `${cell ?? ''}`.trim()));
+  if (!nonEmptyRows.length) return null;
+  const [headerRow, ...dataRows] = nonEmptyRows;
+  const headers = headerRow.map((header) => `${header ?? ''}`.trim());
+  const parsedRows = dataRows.map((row) => row.map((value) => `${value ?? ''}`));
   return { headers, rows: parsedRows };
 }
 
-async function parseImportFile(file) {
+async function parseFile(file) {
   const extension = file?.name?.split('.').pop()?.toLowerCase();
   if (!extension) return null;
 
@@ -174,14 +206,72 @@ async function parseImportFile(file) {
     );
     if (!headerRow) return null;
     const headers = headerRow.map((cell) => `${cell ?? ''}`.trim());
-    const parsedRows = rows.map((row) =>
-      headers.map((_, index) => `${row?.[index] ?? ''}`.trim()),
-    );
+   const parsedRows = rows.map((row) => row.map((value) => `${value ?? ''}`));
     return { headers, rows: parsedRows };
   }
 
   showToast('Unsupported file type. Please upload a CSV or Excel file.');
   return null;
+}
+
+function validateRow(row, index, headers = []) {
+  if (!Array.isArray(row)) {
+    return { ok: false, cleanedRow: [], error: `Row ${index} is not a list.` };
+  }
+  const cleaned = row.map((value) => `${value ?? ''}`.replace(/\r/g, '').trim());
+  if (!cleaned.some((value) => value)) {
+    return { ok: false, cleanedRow: cleaned, error: 'Empty row.' };
+  }
+  if (headers.length && cleaned.length < headers.length) {
+    const padding = Array(headers.length - cleaned.length).fill('');
+    return { ok: true, cleanedRow: [...cleaned, ...padding], error: null };
+  }
+  if (headers.length && cleaned.length > headers.length) {
+    return { ok: true, cleanedRow: cleaned.slice(0, headers.length), error: null };
+  }
+  return { ok: true, cleanedRow: cleaned, error: null };
+}
+
+function getMemoryUsageMb() {
+  const memory = window?.performance?.memory?.usedJSHeapSize;
+  if (!memory) return null;
+  return Math.round((memory / (1024 * 1024)) * 10) / 10;
+}
+
+function ensureImportStatus(anchor, message = '') {
+  const container = anchor?.parentElement || viewActions;
+  let status = container.querySelector('.import-status');
+  if (!status) {
+    status = document.createElement('div');
+    status.className = 'import-status muted';
+    container.appendChild(status);
+  }
+  if (message) status.textContent = message;
+  return status;
+}
+
+function downloadErrorReport(failedRows, format = 'json') {
+  if (!failedRows.length) return;
+  let blob;
+  if (format === 'csv') {
+    const headers = ['lineNumber', 'reason', 'values'];
+    const csvLines = [
+      headers.join(','),
+      ...failedRows.map((row) => [
+        row.lineNumber,
+        JSON.stringify(row.reason || ''),
+        JSON.stringify((row.values || []).join(' | ')),
+      ].join(',')),
+    ];
+    blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+  } else {
+    blob = new Blob([JSON.stringify(failedRows, null, 2)], { type: 'application/json' });
+  }
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `import-errors-${new Date().toISOString().slice(0, 10)}.${format}`;
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 function recordFailedImportLine(failedRows, lineNumber, values, reason) {
@@ -192,17 +282,137 @@ function recordFailedImportLine(failedRows, lineNumber, values, reason) {
   });
 }
 
-function showImportReport({ title, successCount, failedRows }) {
+async function importRows(rows, options = {}) {
+  const {
+    headers = [],
+    batchSize = 100,
+    batchDelayMs = 50,
+    startLineNumber = 2,
+    transformRow,
+    insertBatch,
+    statusEl,
+    summaryTitle = 'Import report',
+  } = options;
+  const summary = {
+    title: summaryTitle,
+    totalRows: rows.length,
+    inserted: 0,
+    skipped: 0,
+    failedRows: [],
+  };
+  let lastSuccessfulLine = null;
+
+  const updateStatus = () => {
+    if (!statusEl) return;
+    statusEl.textContent = `Imported ${summary.inserted} / ${summary.totalRows}`;
+  };
+
+  const insertWithSplit = async (payloads, meta) => {
+    if (!payloads.length) return;
+    try {
+      await insertBatch(payloads);
+      summary.inserted += payloads.length;
+      lastSuccessfulLine = meta[meta.length - 1]?.lineNumber ?? lastSuccessfulLine;
+      updateStatus();
+    } catch (error) {
+      if (payloads.length === 1) {
+        recordFailedImportLine(
+          summary.failedRows,
+          meta[0]?.lineNumber ?? startLineNumber,
+          meta[0]?.values ?? [],
+          error?.message || 'Insert failed',
+        );
+        console.warn('Import row failed insert', {
+          lineNumber: meta[0]?.lineNumber ?? startLineNumber,
+          reason: error?.message || 'Insert failed',
+        });
+        summary.skipped += 1;
+        updateStatus();
+        return;
+      }
+      const mid = Math.floor(payloads.length / 2);
+      await insertWithSplit(payloads.slice(0, mid), meta.slice(0, mid));
+      await insertWithSplit(payloads.slice(mid), meta.slice(mid));
+    }
+  };
+
+  for (let offset = 0; offset < rows.length; offset += batchSize) {
+    const batchStart = performance.now();
+    const batchRows = rows.slice(offset, offset + batchSize);
+    const payloads = [];
+    const meta = [];
+    for (let idx = 0; idx < batchRows.length; idx += 1) {
+      const lineNumber = startLineNumber + offset + idx;
+      const validation = validateRow(batchRows[idx], lineNumber, headers);
+      if (!validation.ok) {
+        recordFailedImportLine(summary.failedRows, lineNumber, validation.cleanedRow, validation.error);
+        console.warn('Import row skipped', { lineNumber, reason: validation.error });
+        summary.skipped += 1;
+        continue;
+      }
+      try {
+        const result = await transformRow(validation.cleanedRow, lineNumber);
+        if (!result?.ok) {
+          recordFailedImportLine(summary.failedRows, lineNumber, validation.cleanedRow, result?.error || 'Invalid row');
+          console.warn('Import row skipped', { lineNumber, reason: result?.error || 'Invalid row' });
+          summary.skipped += 1;
+          continue;
+        }
+        payloads.push(result.payload);
+        meta.push({ lineNumber, values: validation.cleanedRow });
+      } catch (error) {
+        recordFailedImportLine(
+          summary.failedRows,
+          lineNumber,
+          validation.cleanedRow,
+          error?.message || 'Row processing failed',
+        );
+        console.warn('Import row skipped', { lineNumber, reason: error?.message || 'Row processing failed' });
+        summary.skipped += 1;
+      }
+    }
+
+    const memoryMb = getMemoryUsageMb();
+    console.info('Import batch starting', {
+      batchStart: offset + 1,
+      batchSize: batchRows.length,
+      memoryMb,
+      lastSuccessfulLine,
+    });
+
+    await insertWithSplit(payloads, meta);
+
+    const batchEnd = performance.now();
+    console.info('Import batch complete', {
+      batchStart: offset + 1,
+      batchSize: batchRows.length,
+      durationMs: Math.round(batchEnd - batchStart),
+      lastSuccessfulLine,
+    });
+    if (batchDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+    } else {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+  }
+
+  updateStatus();
+  return summary;
+}
+
+function showImportReport({ title, totalRows, inserted, skipped, failedRows }) {
   const body = document.createElement('div');
   body.className = 'modal-body section-stack';
 
   const summaryPanel = document.createElement('div');
   summaryPanel.className = 'section-stack';
+   const totalLine = document.createElement('div');
+  totalLine.textContent = `Total rows read: ${totalRows}`;
   const successLine = document.createElement('div');
-  successLine.textContent = `Successful lines: ${successCount}`;
+   successLine.textContent = `Total inserted: ${inserted}`;
   const failedLine = document.createElement('div');
-  failedLine.textContent = `Failed lines: ${failedRows.length}`;
-  summaryPanel.append(successLine, failedLine);
+  failedLine.textContent = `Total skipped: ${skipped}`;
+  summaryPanel.append(totalLine, successLine, failedLine);
 
   const failedPanel = document.createElement('div');
   failedPanel.className = 'section-stack';
@@ -239,6 +449,22 @@ function showImportReport({ title, successCount, failedRows }) {
   failedBtn.disabled = failedRows.length === 0;
   tabRow.append(summaryBtn, failedBtn);
 
+  const downloadRow = document.createElement('div');
+  downloadRow.className = 'form-grid';
+  if (failedRows.length) {
+    const downloadJson = document.createElement('button');
+    downloadJson.type = 'button';
+    downloadJson.className = 'pill tiny';
+    downloadJson.textContent = 'Download errors (JSON)';
+    downloadJson.addEventListener('click', () => downloadErrorReport(failedRows, 'json'));
+    const downloadCsv = document.createElement('button');
+    downloadCsv.type = 'button';
+    downloadCsv.className = 'pill tiny secondary';
+    downloadCsv.textContent = 'Download errors (CSV)';
+    downloadCsv.addEventListener('click', () => downloadErrorReport(failedRows, 'csv'));
+    downloadRow.append(downloadJson, downloadCsv);
+  }
+
   function showPanel(panel) {
     summaryPanel.hidden = panel !== summaryPanel;
     failedPanel.hidden = panel !== failedPanel;
@@ -249,40 +475,115 @@ function showImportReport({ title, successCount, failedRows }) {
   summaryBtn.addEventListener('click', () => showPanel(summaryPanel));
   failedBtn.addEventListener('click', () => showPanel(failedPanel));
 
-  body.append(tabRow, summaryPanel, failedPanel);
+  body.append(tabRow, downloadRow, summaryPanel, failedPanel);
   openModalSimple({ title: title || 'Import report', bodyEl: body });
   showPanel(summaryPanel);
 }
 
+async function simulateImport() {
+  const headers = ['name', 'sku'];
+  const lines = ['name,sku'];
+  for (let i = 1; i <= 2000; i += 1) {
+    if (i % 333 === 0) {
+      lines.push(`"Bad Row ${i}",`);
+    } else if (i % 555 === 0) {
+      lines.push(`"FAIL Row ${i}","sku-${i}"`);
+    } else {
+      lines.push(`"Part ${i}","sku-${i}"`);
+    }
+  }
+  const parsed = parseCsvText(lines.join('\n'));
+  if (!parsed) return null;
+  const { rows } = parsed;
+  const summary = await importRows(rows, {
+    headers,
+    batchSize: 100,
+    summaryTitle: 'Simulated import report',
+    transformRow: async (cleanedRow) => {
+      if (!cleanedRow[0] || cleanedRow[0].startsWith('Bad Row')) {
+        return { ok: false, error: 'Simulated malformed row.' };
+      }
+      return { ok: true, payload: { name: cleanedRow[0], sku: cleanedRow[1] } };
+    },
+    insertBatch: async (payloads) => {
+      if (payloads.some((payload) => payload.name?.includes('FAIL'))) {
+        throw new Error('Simulated batch failure');
+      }
+    },
+  });
+  console.info('Simulated import summary', summary);
+  return summary;
+}
+
+window.simulateImport = simulateImport;
+
 async function handleImportCsv(event, fields, createHandler) {
   const file = event.target.files?.[0];
   if (!file) return;
-  const parsed = await parseImportFile(file);
+  const statusEl = ensureImportStatus(event.target, 'Preparing import…');
+  const parsed = await parseFile(file);
   if (!parsed) return;
-  let successCount = 0;
-const failedRows= [];
   const { headers, rows } = parsed;
-  for (const [index, values] of rows.entries()) {
-    const payload = {};
-    headers.forEach((header, index) => {
-      if (fields.find((field) => field.key === header)) {
-        payload[header] = values[index] ?? '';
-      }
-    });
-    const hasValue = Object.values(payload).some((value) => `${value}`.trim());
-    if (!hasValue) continue;
-    try {
-      await createHandler(payload);
-      successCount += 1;
-    } catch (error) {
-       recordFailedImportLine(failedRows, index + 2, values, error?.message || 'Import failed');
-      console.error('Import error', error);
-    }
+  if (!headers.length) {
+    showToast('Import file is empty.');
+    return;
   }
- showImportReport({
-    title: 'Import report',
-    successCount,
-    failedRows,
+
+  const fieldKeys = new Set(fields.map((field) => field.key));
+  const tableMap = new Map([
+    [createCustomer, 'customers'],
+    [createField, 'fields'],
+    [createTruck, 'trucks'],
+    [createUser, 'users'],
+    [createJobType, 'job_types'],
+    [createProduct, 'products'],
+    [createTool, 'tools'],
+  ]);
+  const tableName = tableMap.get(createHandler);
+  const client = getSupabaseClient();
+  const { orgId } = getConfig();
+
+  const insertBatch = async (payloads) => {
+    if (!payloads.length) return;
+    if (!tableName) {
+      for (const payload of payloads) {
+        await createHandler(payload);
+      }
+    return;
+    }
+ if (!orgId) throw new Error('ORG_ID missing. Please set ORG_ID in localStorage or window.SUPABASE_ORG_ID.');
+    const payloadWithOrg = payloads.map((payload) => ({ ...payload, org_id: orgId }));
+    const { error } = await client.from(tableName).insert(payloadWithOrg);
+    if (error) throw new Error(`Create ${tableName}: ${error.message || 'Import failed'}`);
+  };
+
+  const summary = await importRows(rows, {
+    headers,
+    batchSize: 100,
+    summaryTitle: 'Import report',
+    statusEl,
+    transformRow: async (cleanedRow) => {
+      const payload = {};
+      headers.forEach((header, index) => {
+        if (fieldKeys.has(header)) {
+          payload[header] = cleanedRow[index] ?? '';
+        }
+      });
+      const hasValue = Object.values(payload).some((value) => `${value}`.trim());
+      if (!hasValue) {
+        return { ok: false, error: 'Empty row.' };
+      }
+      return { ok: true, payload };
+    },
+    insertBatch,
+  });
+
+  showImportReport({
+    title: summary.title,
+    totalRows: summary.totalRows,
+    inserted: summary.inserted,
+    skipped: summary.skipped,
+    failedRows: summary.failedRows,
   });
   event.target.value = '';
   await setView(state.currentView);
@@ -293,7 +594,8 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   if (!file) return;
   const truckId = getId(truck);
   if (!truckId) return;
-   const parsed = await parseImportFile(file);
+   const statusEl = ensureImportStatus(event.target, 'Preparing inventory import…');
+  const parsed = await parseFile(file);
   if (!parsed) return;
   const { headers, rows } = parsed;
   if (!headers.length) {
@@ -308,64 +610,80 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   });
   const inventoryMap = new Map(inventoryItems.map((item) => [item.product_id, item]));
 
-   let successCount = 0;
-  const failedRows = [];
-  for (const [index, values] of rows.entries()) {
-    const payload = {};
-    headers.forEach((header, index) => {
-      payload[header] = values[index] ?? '';
-    });
-     const hasValue = Object.values(payload).some((value) => `${value}`.trim());
-    if (!hasValue) continue;
-    const sku = payload.sku?.trim();
-    const name = payload.name?.trim();
-    const minRaw = payload.min_qty ?? payload.minimum_qty ?? payload.min;
-    const parsedMin = Number(minRaw);
-    let product = sku ? productBySku.get(sku.toLowerCase()) : null;
-    if (!product && name) product = productByName.get(name.toLowerCase());
-    if (!product) {
-      if (!name) {
-        showToast('Missing part name for an import row.');
-        recordFailedImportLine(failedRows, index + 2, values, 'Missing par name')
-        continue;
-      }
-      const shouldAdd = confirm(`Part "${name}" was not found. Add it to the parts table?`);
-      if (!shouldAdd) {
-        recordFailedImportLine(failedRows, index + 2, values, 'Skipped by user');
-        continue;
-      }
-      try {
-        product = await createProduct({ name, sku });
-        if (state.boot?.products) state.boot.products.push(product);
-        productByName.set(product.name.toLowerCase(), product);
-        if (product.sku) productBySku.set(product.sku.toLowerCase(), product);
-      } catch (error) {
-        showToast(`Unable to add part: ${error.message}`);
-         recordFailedImportLine(failedRows, index + 2, values, error?.message || 'Unable to add part');
-        continue;
-      }
-    }
-    const existing = inventoryMap.get(product.id);
-    const min_qty = Number.isNaN(parsedMin) ? (existing?.min_qty ?? 0) : parsedMin;
-    const qty = existing?.qty ?? 0;
-    try {
-      await upsertTruckInventory({
-        truck_id: truckId,
-        product_id: product.id,
-        qty,
-        min_qty,
-        origin: 'permanent',
+   const client = getSupabaseClient();
+  const { orgId } = getConfig();
+  const insertBatch = async (payloads) => {
+    if (!payloads.length) return;
+    if (!orgId) throw new Error('ORG_ID missing. Please set ORG_ID in localStorage or window.SUPABASE_ORG_ID.');
+    const payloadWithOrg = payloads.map((payload) => ({ ...payload, org_id: orgId }));
+    const { error } = await client
+      .from('truck_inventory')
+      .upsert(payloadWithOrg, { onConflict: 'truck_id,product_id' });
+    if (error) throw new Error(`Update truck inventory: ${error.message || 'Import failed'}`);
+  };
+
+  const summary = await importRows(rows, {
+    headers,
+    batchSize: 100,
+    summaryTitle: 'Inventory import report',
+    statusEl,
+    transformRow: async (cleanedRow, lineNumber) => {
+      const payload = {};
+      headers.forEach((header, index) => {
+        payload[header] = cleanedRow[index] ?? '';
       });
-      successCount += 1;
-    } catch (error) {
-         recordFailedImportLine(failedRows, index + 2, values, error?.message || 'Inventory update failed');
-      console.error('Inventory import error', error);
-    }
-  }
-   showImportReport({
-    title: 'Inventory import report',
-    successCount,
-    failedRows,
+      const hasValue = Object.values(payload).some((value) => `${value}`.trim());
+      if (!hasValue) {
+        return { ok: false, error: 'Empty row.' };
+      }
+    const sku = payload.sku?.trim();
+      const name = payload.name?.trim();
+      const minRaw = payload.min_qty ?? payload.minimum_qty ?? payload.min;
+      const parsedMin = Number(minRaw);
+      let product = sku ? productBySku.get(sku.toLowerCase()) : null;
+      if (!product && name) product = productByName.get(name.toLowerCase());
+      if (!product) {
+        if (!name) {
+          showToast('Missing part name for an import row.');
+          return { ok: false, error: 'Missing part name.' };
+        }
+        const shouldAdd = confirm(`Part "${name}" was not found. Add it to the parts table?`);
+        if (!shouldAdd) {
+          return { ok: false, error: 'Skipped by user' };
+        }
+        try {
+          product = await createProduct({ name, sku });
+          if (state.boot?.products) state.boot.products.push(product);
+          productByName.set(product.name.toLowerCase(), product);
+          if (product.sku) productBySku.set(product.sku.toLowerCase(), product);
+        } catch (error) {
+          showToast(`Unable to add part: ${error.message}`);
+          return { ok: false, error: error?.message || 'Unable to add part' };
+        }
+      }
+  const existing = inventoryMap.get(product.id);
+      const min_qty = Number.isNaN(parsedMin) ? (existing?.min_qty ?? 0) : parsedMin;
+      const qty = existing?.qty ?? 0;
+      return {
+        ok: true,
+        payload: {
+          truck_id: truckId,
+          product_id: product.id,
+          qty,
+          min_qty,
+          origin: 'permanent',
+        },
+      };
+    },
+    insertBatch,
+  });
+
+  showImportReport({
+    title: summary.title,
+    totalRows: summary.totalRows,
+    inserted: summary.inserted,
+    skipped: summary.skipped,
+    failedRows: summary.failedRows,
   });
   event.target.value = '';
   await renderTruckListView(truck, 'inventory');
