@@ -139,18 +139,62 @@ function exportCsvTemplate(filePrefix, fields) {
   URL.revokeObjectURL(link.href);
 }
 
+function parseCsvText(text) {
+  const [headerRow, ...rows] = text.split(/\r?\n/).filter((line) => line.trim());
+  if (!headerRow) return null;
+  const headers = headerRow.split(',').map((header) => header.trim());
+  const parsedRows = rows.map((row) =>
+    row.split(',').map((value) => value.replace(/^\"|\"$/g, '').trim()),
+  );
+  return { headers, rows: parsedRows };
+}
+
+async function parseImportFile(file) {
+  const extension = file?.name?.split('.').pop()?.toLowerCase();
+  if (!extension) return null;
+
+  if (extension === 'csv') {
+    const text = await file.text();
+    return parseCsvText(text);
+  }
+
+  if (extension === 'xlsx' || extension === 'xls') {
+    if (!window.XLSX) {
+      showToast('Import failed: Excel parser not available.');
+      return null;
+    }
+    const data = await file.arrayBuffer();
+    const workbook = window.XLSX.read(data, { type: 'array' });
+    const sheetName = workbook.SheetNames?.[0];
+    if (!sheetName) return null;
+    const sheet = workbook.Sheets[sheetName];
+    const sheetRows = window.XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+    const [headerRow, ...rows] = sheetRows.filter((row) =>
+      Array.isArray(row) && row.some((cell) => `${cell ?? ''}`.trim()),
+    );
+    if (!headerRow) return null;
+    const headers = headerRow.map((cell) => `${cell ?? ''}`.trim());
+    const parsedRows = rows.map((row) =>
+      headers.map((_, index) => `${row?.[index] ?? ''}`.trim()),
+    );
+    return { headers, rows: parsedRows };
+  }
+
+  showToast('Unsupported file type. Please upload a CSV or Excel file.');
+  return null;
+}
+
 async function handleImportCsv(event, fields, createHandler) {
   const file = event.target.files?.[0];
   if (!file) return;
-  const text = await file.text();
-  const [headerRow, ...rows] = text.split(/\r?\n/).filter(Boolean);
-  const headers = headerRow.split(',');
-  for (const row of rows) {
-    const values = row.split(',').map((value) => value.replace(/^\"|\"$/g, ''));
+  const parsed = await parseImportFile(file);
+  if (!parsed) return;
+  const { headers, rows } = parsed;
+  for (const values of rows) {
     const payload = {};
     headers.forEach((header, index) => {
       if (fields.find((field) => field.key === header)) {
-        payload[header] = values[index];
+        payload[header] = values[index] ?? '';
       }
     });
     try {
@@ -170,13 +214,13 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   if (!file) return;
   const truckId = getId(truck);
   if (!truckId) return;
-  const text = await file.text();
-  const [headerRow, ...rows] = text.split(/\r?\n/).filter(Boolean);
-  if (!headerRow) {
+   const parsed = await parseImportFile(file);
+  if (!parsed) return;
+  const { headers, rows } = parsed;
+  if (!headers.length) {
     showToast('Import file is empty.');
     return;
   }
-  const headers = headerRow.split(',').map((header) => header.trim());
   const productBySku = new Map();
   const productByName = new Map();
   (state.boot?.products || []).forEach((product) => {
@@ -185,11 +229,10 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   });
   const inventoryMap = new Map(inventoryItems.map((item) => [item.product_id, item]));
 
-  for (const row of rows) {
-    const values = row.split(',').map((value) => value.replace(/^\"|\"$/g, '').trim());
+   for (const values of rows) {
     const payload = {};
     headers.forEach((header, index) => {
-      payload[header] = values[index];
+      payload[header] = values[index] ?? '';
     });
     const sku = payload.sku?.trim();
     const name = payload.name?.trim();
@@ -744,7 +787,7 @@ async function renderListView({
     exportBtn.addEventListener('click', () => exportCsv(items, filePrefix, fields));
     const importInput = document.createElement('input');
     importInput.type = 'file';
-    importInput.accept = '.csv';
+    importInput.accept = '.csv,.xlsx,.xls';
     importInput.addEventListener('change', (event) => handleImportCsv(event, fields, createHandler));
     viewActions.appendChild(exportBtn);
     viewActions.appendChild(importInput);
@@ -1202,7 +1245,7 @@ async function renderPartsView() {
   exportBtn.textContent = 'Export CSV';
   const importInput = document.createElement('input');
   importInput.type = 'file';
-  importInput.accept = '.csv';
+ importInput.accept = '.csv,.xlsx,.xls';
 
   viewActions.append(addBtn, exportBtn, importInput);
 
@@ -3190,7 +3233,7 @@ async function renderTruckListView(truck, listType) {
     exportBtn.textContent = 'Export Template';
     const importInput = document.createElement('input');
     importInput.type = 'file';
-    importInput.accept = '.csv';
+     importInput.accept = '.csv,.xlsx,.xls';
     const importFields = [
       { key: 'sku', label: 'SKU' },
       { key: 'name', label: 'Part Name' },

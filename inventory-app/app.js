@@ -7,8 +7,8 @@ const state = {
   bins: [],
  view: 'aisles',
   selectedAisleId: null,
-  selectedSide: 'null',
-  selectedShelfId: 'null',
+  selectedSide: null,
+  selectedShelfId: null,
  levelFilter: 'all',
   highlight: {
     aisleId: null,
@@ -24,11 +24,8 @@ function cacheElements() {
   elements = {
     aisleList: document.getElementById('aisle-list'),
     shelfList: document.getElementById('shelf-list'),
-    binList: document.getElementById('bin-list'),
     aisleTitle: document.getElementById('aisle-title'),
     aisleSubtitle: document.getElementById('aisle-subtitle'),
-    shelfTitle: document.getElementById('shelf-title'),
-    shelfSubtitle: document.getElementById('shelf-subtitle'),
     addAisle: document.getElementById('add-aisle'),
     addShelf: document.getElementById('add-shelf'),
     addBin: document.getElementById('add-bin'),
@@ -37,7 +34,6 @@ function cacheElements() {
     findButton: document.getElementById('find-btn'),
     backAisles: document.getElementById('back-aisles'),
     backShelves: document.getElementById('back-shelves'),
-    backBins: document.getElementById('back-bins'),
     modalWrap: document.getElementById('modalWrap'),
     modalTitle: document.getElementById('modalTitle'),
     modalBody: document.getElementById('modalBody'),
@@ -216,23 +212,33 @@ function renderAisles() {
 
   state.aisles.forEach((aisle) => {
      const shelves = aisleShelves(aisle.id);
-    const sideACount = shelves.filter((shelf) => shelf.side === 'A').length;
-    const sideBCount = shelves.filter((shelf) => shelf.side === 'B').length;
-    const item = document.createElement('div');
+    const sideAShelves = shelves.filter((shelf) => shelf.side === 'A');
+    const sideBShelves = shelves.filter((shelf) => shelf.side === 'B');
+    const sideACount = sideAShelves.length;
+    const sideBCount = sideBShelves.length;
+    const sideABins = state.bins.filter((bin) => sideAShelves.some((shelf) => shelf.id === bin.shelfId)).length;
+    const sideBBins = state.bins.filter((bin) => sideBShelves.some((shelf) => shelf.id === bin.shelfId)).length;
+    const row = document.createElement('div');
     const isHighlighted = aisle.id === state.highlight.aisleId;
-    item.className = `aisle-card${isHighlighted ? ' is-highlighted' : ''}`;
-    item.dataset.aisleId = aisle.id;
-    item.innerHTML = `
-       <div class="row space">
-        <input class="aisle-name" value="${aisle.name || ''}" aria-label="Aisle name"/>
-        <button class="btn ghost small danger icon-btn" type="button" data-action="delete-aisle" title="Delete aisle">🗑</button>
+    row.className = `aisle-row${isHighlighted ? ' is-highlighted' : ''}`;
+    row.dataset.aisleId = aisle.id;
+    const orientationText = aisle.orientation ? `<div class="chip soft">${aisle.orientation}</div>` : '';
+    row.innerHTML = `
+      <div class="aisle-side${isHighlighted && state.selectedSide === 'A' ? ' is-highlighted' : ''}" data-side="A">
+        <div class="row space">
+          <div class="stack">
+            <div class="chip soft">Side A</div>
+            <div class="muted">${sideACount} shelves · ${sideABins} bins</div>
+          </div>
+          <button class="btn ghost small" type="button" data-action="select-side" data-side="A">Select Side</button>
+        </div>
       </div>
-      <div class="row space">
-        <div class="chip soft">Side A · ${sideACount} shelves</div>
-        <div class="chip soft">Side B · ${sideBCount} shelves</div>
-      </div>
-      <div class="row space">
-        <div class="field compact">
+      <div class="aisle-card aisle-center">
+        <div class="row space" style="width:100%">
+          <input class="aisle-name" value="${aisle.name || ''}" aria-label="Aisle name"/>
+          <button class="btn ghost small danger icon-btn" type="button" data-action="delete-aisle" title="Delete aisle">🗑</button>
+        </div>
+        <div class="field compact" style="width:100%">
           <label>Orientation</label>
           <select class="orientation-select">
             <option value="">—</option>
@@ -240,11 +246,25 @@ function renderAisles() {
             <option value="EW"${aisle.orientation === 'EW' ? ' selected' : ''}>EW</option>
           </select>
         </div>
-        <button class="btn ghost small" type="button" data-action="open-aisle">Open</button>
+        ${orientationText}
+        <div class="aisle-divider"></div>
+        <div class="row" style="justify-content:center; width:100%">
+          <button class="btn ghost small" type="button" data-action="select-side" data-side="A">Side A</button>
+          <button class="btn ghost small" type="button" data-action="select-side" data-side="B">Side B</button>
+        </div>
+      </div>
+      <div class="aisle-side${isHighlighted && state.selectedSide === 'B' ? ' is-highlighted' : ''}" data-side="B">
+        <div class="row space">
+          <div class="stack">
+            <div class="chip soft">Side B</div>
+            <div class="muted">${sideBCount} shelves · ${sideBBins} bins</div>
+          </div>
+          <button class="btn ghost small" type="button" data-action="select-side" data-side="B">Select Side</button>
+        </div>
       </div>
     `;
   
- const nameInput = item.querySelector('.aisle-name');
+    const nameInput = row.querySelector('.aisle-name');
     nameInput.addEventListener('change', (event) => {
       aisle.name = event.target.value.trim() || 'Aisle';
       saveData();
@@ -252,24 +272,26 @@ function renderAisles() {
     });
  nameInput.addEventListener('click', (event) => event.stopPropagation());
  
-  item.querySelector('.orientation-select').addEventListener('change', (event) => {
+    row.querySelector('[data-action="delete-aisle"]').addEventListener('click', (event) => {
+      event.stopPropagation();
+      handleDeleteAisle(aisle.id);
+    });
+
+    row.querySelector('.orientation-select').addEventListener('change', (event) => {
       aisle.orientation = event.target.value || null;
       saveData();
       renderAisles();
     });
 
-    item.querySelector('[data-action="open-aisle"]').addEventListener('click', (event) => {
-      event.stopPropagation();
-      openSidePicker(aisle.id);
+    row.querySelectorAll('[data-action="select-side"]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const side = event.currentTarget.dataset.side;
+        selectAisleSide(aisle.id, side);
+      });
     });
 
-    item.querySelector('[data-action="delete-aisle"]').addEventListener('click', (event) => {
-      event.stopPropagation();
-      handleDeleteAisle(aisle.id);
-    });
-
-    item.addEventListener('click', () => openSidePicker(aisle.id));
-    elements.aisleList.appendChild(item);
+    elements.aisleList.appendChild(row);
   });
 }
 
@@ -283,8 +305,8 @@ function renderShelves() {
     return;
   }
 
- elements.aisleTitle.textContent = `${aisle.name || 'Aisle'} · Side ${state.selectedSide}`;
-  elements.aisleSubtitle.textContent = 'Shelves ordered by level and name.';
+  elements.aisleTitle.textContent = `${aisle.name || 'Aisle'} · Side ${state.selectedSide}`;
+  elements.aisleSubtitle.textContent = 'Shelves ordered by level with bins displayed for each shelf.';
 
  let shelves = state.shelves.filter((shelf) => shelf.aisleId === aisle.id && shelf.side === state.selectedSide);
   if (state.levelFilter !== 'all') {
@@ -304,22 +326,26 @@ function renderShelves() {
   }
 
   shelves.forEach((shelf) => {
-    const binCount = state.bins.filter((bin) => bin.shelfId === shelf.id).length;
+    const bins = state.bins
+      .filter((bin) => bin.shelfId === shelf.id)
+      .sort((a, b) => Number(a.position) - Number(b.position));
     const item = document.createElement('div');
     const isHighlighted = shelf.id === state.highlight.shelfId;
-    item.className = `shelf-card${isHighlighted ? ' is-highlighted' : ''}`;
+    const isSelected = shelf.id === state.selectedShelfId;
+    item.className = `shelf-section${isHighlighted ? ' is-highlighted' : ''}${isSelected ? ' is-selected' : ''}`;
     item.innerHTML = `
-      <div class="row space">
+      <div class="shelf-header">
         <div class="stack">
           <input class="shelf-name" value="${shelf.name || ''}" aria-label="Shelf name"/>
           <div class="muted">Level ${shelf.level}</div>
         </div>
-        <button class="btn ghost small danger icon-btn" type="button" data-action="delete-shelf" title="Delete shelf">🗑</button>
+        <div class="shelf-actions">
+          <button class="btn ghost small" type="button" data-action="focus-shelf">Focus</button>
+          <button class="btn ghost small" type="button" data-action="add-bin">Add Bin</button>
+          <button class="btn ghost small danger icon-btn" type="button" data-action="delete-shelf" title="Delete shelf">🗑</button>
+        </div>
       </div>
-      <div class="row space">
-        <div class="chip soft">${binCount} bins</div>
-        <button class="btn ghost small" type="button" data-action="open-shelf">Open</button>
-      </div>
+      <div class="bins shelf-bins" data-shelf-bins></div>
     `;
 
     item.querySelector('.shelf-name').addEventListener('change', (event) => {
@@ -334,101 +360,69 @@ function renderShelves() {
       handleDeleteShelf(shelf.id);
     });
 
-    item.querySelector('[data-action="open-shelf"]').addEventListener('click', (event) => {
+    item.querySelector('[data-action="focus-shelf"]').addEventListener('click', (event) => {
       event.stopPropagation();
       selectShelf(shelf.id);
+      renderShelves();
     });
 
-    item.addEventListener('click', () => selectShelf(shelf.id));
+    item.querySelector('[data-action="add-bin"]').addEventListener('click', (event) => {
+      event.stopPropagation();
+      selectShelf(shelf.id);
+      handleAddBin(shelf.id);
+    });
+
+    const binWrap = item.querySelector('[data-shelf-bins]');
+    if (!bins.length) {
+      binWrap.innerHTML = '<div class="empty-state">No bins yet for this shelf.</div>';
+    } else {
+      bins.forEach((bin) => {
+        const binTile = document.createElement('div');
+        const isHighlightedBin = bin.id === state.highlight.binId;
+        const outOfStock = Boolean(bin.out_of_stock) || Number(bin.qty ?? 0) === 0;
+        binTile.className = `bin${outOfStock ? ' oos' : ''}${isHighlightedBin ? ' is-highlighted' : ''}`;
+        binTile.innerHTML = `
+          <div class="binhead">
+            <div class="binlabel">Bin ${bin.position}</div>
+            <button class="btn ghost small danger icon-btn" type="button" data-action="delete-bin" title="Delete bin">🗑</button>
+          </div>
+          <div class="binmeta">
+            <div class="chip soft">${bin.sku || 'No SKU'}</div>
+            <div class="chip soft">${bin.part_name || 'Empty'}</div>
+          </div>
+          <div class="row space">
+            <div class="muted">Qty</div>
+            <div class="chip ${outOfStock ? 'bad' : 'good'}">${Number(bin.qty ?? 0)}</div>
+          </div>
+        `;
+
+        binTile.querySelector('[data-action="delete-bin"]').addEventListener('click', (event) => {
+          event.stopPropagation();
+          handleDeleteBin(bin.id);
+        });
+
+        binTile.addEventListener('click', () => openBinDetails(bin.id));
+        binWrap.appendChild(binTile);
+      });
+    }
+
+    item.addEventListener('click', () => {
+      selectShelf(shelf.id);
+      renderShelves();
+    });
     elements.shelfList.appendChild(item);
   });
 
-}
-function renderBins() {
-  elements.binList.innerHTML = '';
-   const shelf = state.shelves.find((item) => item.id === state.selectedShelfId);
-  if (!shelf) {
-    elements.shelfTitle.textContent = 'Select a shelf';
-    elements.shelfSubtitle.textContent = 'Pick a shelf to view bins.';
-    elements.binList.innerHTML = '<div class="empty-state">Select a shelf to load bins.</div>';
-    return;
-  }
-
-  elements.shelfTitle.textContent = shelf.name || 'Shelf';
-  elements.shelfSubtitle.textContent = `Level ${shelf.level} · Side ${shelf.side}`;
-
-  const bins = state.bins
-    .filter((bin) => bin.shelfId === shelf.id)
-    .sort((a, b) => Number(a.position) - Number(b.position));
-
-  if (!bins.length) {
-    elements.binList.innerHTML = `<div class="empty-state">${state.errors.bins}</div>`;
-    return;
-  }
-
-  bins.forEach((bin) => {
-    const item = document.createElement('div');
-     const isHighlighted = bin.id === state.highlight.binId;
-    item.className = `bin${isHighlighted ? ' is-highlighted' : ''}`;
-    item.innerHTML = `
-      <div class="binhead">
-        <div class="binlabel">Bin ${bin.position}</div>
-        <button class="btn ghost small danger icon-btn" type="button" data-action="delete-bin" title="Delete bin">🗑</button>
-      </div>
-      <div class="binmeta">
-        <div class="chip soft">${bin.sku || 'No SKU'}</div>
-        <div class="chip soft">${bin.part_name || 'Unassigned part'}</div>
-      </div>
-      <div class="row space">
-        <div class="muted">Qty</div>
-        <div class="chip good">${Number(bin.qty ?? 0)}</div>
-      </div>
-    `;
-
-     item.querySelector('[data-action="delete-bin"]').addEventListener('click', (event) => {
-      event.stopPropagation();
-      handleDeleteBin(bin.id);
-    });
-
-     item.addEventListener('click', () => openBinDetails(bin.id));
-    elements.binList.appendChild(item);
-  });
 }
 
 function renderAll() {
   renderLevelFilter();
   renderAisles();
   renderShelves();
-  renderBins();
 }
 
 function selectShelf(shelfId) {
   state.selectedShelfId = shelfId;
-  updateView('bins');
-  renderBins();
-}
-
-function openSidePicker(aisleId) {
-  const aisle = state.aisles.find((item) => item.id === aisleId);
-  if (!aisle) return;
-  openModal(`Choose side · ${aisle.name || 'Aisle'}`, `
-    <div class="stack">
-      <div class="muted">Select the side to view shelf levels.</div>
-      <div class="row">
-        <button class="btn primary" id="choose-side-a" type="button">Side A</button>
-        <button class="btn" id="choose-side-b" type="button">Side B</button>
-      </div>
-    </div>
-  `);
-
-  document.getElementById('choose-side-a').addEventListener('click', () => {
-    closeModal();
-    selectAisleSide(aisleId, 'A');
-  });
-  document.getElementById('choose-side-b').addEventListener('click', () => {
-    closeModal();
-    selectAisleSide(aisleId, 'B');
-  });
 }
 
 function selectAisleSide(aisleId, side) {
@@ -450,12 +444,13 @@ function handleAddAisle() {
         <label for="aisle-orientation">Orientation</label>
        <select id="aisle-orientation" name="orientation">
           <option value="">—</option>
+          <option value="NS">NS</option>
           <option value="EW">EW</option>
         </select>
       </div>
       <div class="row">
-        <button class="btn primary" type="submit">Create Shelf System</button>
-       <button class="btn primary" type="submit">Create Aisle</button>
+        <button class="btn primary" type="submit">Create Aisle</button>
+        <button class="btn ghost" type="button" id="aisle-cancel">Cancel</button>
       </div>
     </form>
   `);
@@ -469,7 +464,7 @@ function handleAddAisle() {
    const orientation = String(formData.get('orientation') || '').trim() || null;
      if (!name) return;
     const payload = {
-        id: generateId('aisle');
+        id: generateId('aisle'),
       name,
       orientation,
      sides: { A: { shelfIds: [] }, B: { shelfIds: [] } },
@@ -484,6 +479,7 @@ function handleAddAisle() {
 function handleAddShelf() {
   if (!state.selectedAisleId || !state.selectedSide) {
     showToast('Select an aisle side first.');
+    return;
   }
  
    openModal('Add Shelf', `
@@ -526,10 +522,11 @@ function handleAddShelf() {
   });
 }
 
-function handleAddBin() {
-  const shelf = state.shelves.find((item) => item.id === state.selectedShelfId);
+function handleAddBin(shelfId = null) {
+  const targetShelfId = shelfId || state.selectedShelfId;
+  const shelf = state.shelves.find((item) => item.id === targetShelfId);
   if (!shelf) {
-  showToast('Select a shelf first.');
+    showToast('Select a shelf first.');
     return;
   }
  const bins = state.bins.filter((bin) => bin.shelfId === shelf.id);
@@ -541,17 +538,35 @@ function handleAddBin() {
     sku: '',
     part_name: '',
     qty: 0,
+    out_of_stock: true,
   };
  state.bins.push(payload);
   saveData();
-  renderBins();
+  renderShelves();
   openBinDetails(payload.id, true);
 }
 
 function openBinDetails(binId, isNew = false) {
   const bin = state.bins.find((item) => item.id === binId);
   if (!bin) return;
- openModal(`${isNew ? 'Add' : 'Edit'} Bin · ${bin.position}`, `
+  const shelf = state.shelves.find((item) => item.id === bin.shelfId);
+  const aisle = shelf ? state.aisles.find((item) => item.id === shelf.aisleId) : null;
+  const titleParts = [];
+  if (shelf?.level) {
+    titleParts.push(`Level ${shelf.level}`);
+  }
+  const systemName = aisle?.system || aisle?.name || 'Aisle';
+  if (systemName) {
+    const sideSuffix = shelf?.side ? `${shelf.side}` : '';
+    titleParts.push(`Shelf System ${systemName}${sideSuffix}`);
+  }
+  if (shelf?.name) {
+    titleParts.push(`Shelf ${shelf.name}`);
+  } else if (shelf) {
+    titleParts.push('Shelf');
+  }
+  titleParts.push(`Bin ${bin.position}`);
+  openModal(titleParts.join(' • '), `
     <form id="bin-form" class="stack">
       <div class="field">
        <label for="bin-sku">SKU</label>
@@ -566,6 +581,12 @@ function openBinDetails(binId, isNew = false) {
         <input id="bin-qty" name="qty" type="number" min="0" step="1" value="${Number(bin.qty ?? 0)}" />
         </div>
       <div class="row">
+        <label class="chip soft">
+          <input id="bin-oos" name="out_of_stock" type="checkbox" ${bin.out_of_stock ? 'checked' : ''} />
+          Out of stock
+        </label>
+      </div>
+      <div class="row">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn ghost" type="button" id="bin-cancel">Cancel</button>
          <button class="btn ghost" type="button" id="bin-clear">Clear Product</button>
@@ -578,8 +599,9 @@ function openBinDetails(binId, isNew = false) {
     bin.sku = '';
     bin.part_name = '';
     bin.qty = 0;
+    bin.out_of_stock = true;
     saveData();
-    renderBins();
+    renderShelves();
     closeModal();
   });
   document.getElementById('bin-form').addEventListener('submit', (event) => {
@@ -589,8 +611,9 @@ function openBinDetails(binId, isNew = false) {
     bin.part_name = String(formData.get('part_name') || '').trim();
     const qty = Number(formData.get('qty') || 0);
    bin.qty = Number.isNaN(qty) ? 0 : qty;
+    bin.out_of_stock = formData.get('out_of_stock') === 'on';
     saveData();
-    renderBins();
+    renderShelves();
     closeModal();
 });
 }
@@ -637,7 +660,7 @@ function handleDeleteBin(binId) {
   if (!confirmed) return;
   state.bins = state.bins.filter((item) => item.id !== binId);
   saveData();
-  renderBins();
+  renderShelves();
 }
 
   function handleFind() {
@@ -665,8 +688,14 @@ function handleDeleteBin(binId) {
   }
   state.selectedAisleId = aisle.id;
   state.selectedSide = shelf.side;
+  state.selectedShelfId = shelf.id;
   startHighlight({ aisleId: aisle.id, shelfId: shelf.id, binId: match.id });
+  updateView('aisles');
   renderAll();
+  setTimeout(() => {
+    updateView('shelves');
+    renderAll();
+  }, 400);
 }
 
 function bindEvents() {
@@ -690,9 +719,6 @@ function bindEvents() {
   elements.backShelves.addEventListener('click', () => {
     updateView('aisles');
   });
-  elements.backBins.addEventListener('click', () => {
-    updateView('shelves');
-  });
   elements.modalClose.addEventListener('click', closeModal);
   elements.modalWrap.addEventListener('click', (event) => {
     if (event.target === elements.modalWrap) closeModal();
@@ -704,11 +730,8 @@ function missingElements() {
   const required = [
     ['aisleList', elements.aisleList],
     ['shelfList', elements.shelfList],
-    ['binList', elements.binList],
     ['aisleTitle', elements.aisleTitle],
     ['aisleSubtitle', elements.aisleSubtitle],
-    ['shelfTitle', elements.shelfTitle],
-    ['shelfSubtitle', elements.shelfSubtitle],
     ['addAisle', elements.addAisle],
     ['addShelf', elements.addShelf],
     ['addBin', elements.addBin],
@@ -717,7 +740,6 @@ function missingElements() {
     ['findButton', elements.findButton],
     ['backAisles', elements.backAisles],
     ['backShelves', elements.backShelves],
-    ['backBins', elements.backBins],
     ['modalWrap', elements.modalWrap],
     ['modalTitle', elements.modalTitle],
     ['modalBody', elements.modalBody],
