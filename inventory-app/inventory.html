@@ -368,6 +368,21 @@
       white-space:nowrap;
     }
 
+    .miniThumb{
+      width:44px;
+      height:44px;
+      border-radius:12px;
+      border:1px solid var(--line);
+      background:rgba(2,6,23,.55);
+      object-fit:cover;
+    }
+    .miniThumb.ph{
+      display:grid;
+      place-items:center;
+      font-size:11px;
+      color:var(--muted);
+    }
+
     .right{margin-left:auto}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
     .dangerText{color: #fecaca}
@@ -386,6 +401,7 @@
   </div>
 
   <div class="nav">
+    <button class="btn ghost" id="nav_office" onclick="goOffice()">Office dashboard</button>
     <button class="btn ghost" id="nav_home" onclick="go('home')">Home</button>
     <button class="btn ghost" id="nav_count" onclick="go('map')">Map</button>
     <button class="btn ghost" id="nav_find" onclick="go('find')">Find</button>
@@ -417,6 +433,7 @@ import {
   createProduct as createPart,
   updateProduct as updatePart,
   deleteProduct as deletePart,
+  uploadProductImage,
 } from '../shared/db.js';
 import { getConfig } from '../shared/config.js';
 /* =========================================================
@@ -548,6 +565,7 @@ async function syncProductToSupabase(sku, payload){
     description: payload.desc || "",
     category: payload.category || "",
     minimum_qty: n2(payload.reorderPoint),
+    image_url: payload.image || "",
   };
   if(existingId){
     const updated = await updatePart(existingId, supabasePayload);
@@ -581,6 +599,49 @@ function toast(msg, ms=1600){
   clearTimeout(toast._tm);
   toast._tm = setTimeout(()=> t.style.display="none", ms);
 }
+
+function setImagePreview(imgId, url){
+  const img = document.getElementById(imgId);
+  if(!img) return;
+  const ph = img.parentElement?.querySelector(".ph");
+  if(url){
+    img.src = url;
+    img.style.display = "block";
+    if(ph) ph.style.display = "none";
+  }else{
+    img.removeAttribute("src");
+    img.style.display = "none";
+    if(ph) ph.style.display = "block";
+  }
+}
+
+async function uploadProductPhoto(fileInputId, urlInputId, previewImgId){
+  const input = document.getElementById(fileInputId);
+  const file = input?.files?.[0];
+  if(!file) return;
+  if(!partsSync.enabled){
+    toast("Connect Supabase to upload photos.");
+    return;
+  }
+  input.disabled = true;
+  toast("Uploading photo...");
+  try{
+    const url = await uploadProductImage(file);
+    if(urlInputId){
+      const urlInput = document.getElementById(urlInputId);
+      if(urlInput) urlInput.value = url;
+    }
+    if(previewImgId) setImagePreview(previewImgId, url);
+    toast("Photo uploaded");
+  }catch(e){
+    console.error("Photo upload failed", e);
+    toast("Photo upload failed");
+  }finally{
+    input.disabled = false;
+    input.value = "";
+  }
+}
+
 function setFooterHint(html){
   const el = document.getElementById("footerHint");
   if(!el) return;
@@ -799,7 +860,9 @@ function activeNav(){
     }
   });
 }
-
+function goOffice(){
+  window.location.href = "../office/index.html";
+}
 function appEl(){ return document.getElementById("app"); }
 
 /* ---------- Views ---------- */
@@ -1296,7 +1359,7 @@ function openBin(binId, opts={}){
   }
 }
 async function saveBin(binId){
-  const previousSku = STATE.binAssignments[ginId] ||"";
+  const previousSku = STATE.binAssignments[binId] || "";
   const sku = (document.getElementById("binSkuSelect")?.value || "").trim();
   const qty = n2(document.getElementById("binQtyInput")?.value);
 
@@ -1351,8 +1414,20 @@ function openNewProduct(binId){
         </div>
       </div>
 
-      <div class="muted" style="margin-top:10px; margin-bottom:6px">Photo (URL or paste image data URL)</div>
-      <input class="input" id="pImg" placeholder="https://..." />
+      <div class="muted" style="margin-top:10px; margin-bottom:6px">Photo</div>
+      <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end">
+        <div style="flex:1; min-width:240px">
+          <input class="input" id="pImg" placeholder="https://..." oninput="setImagePreview('pImgPreview', this.value)" />
+        </div>
+        <div style="min-width:220px">
+          <input class="input" id="pImgFile" type="file" accept="image/*"
+                 onchange="uploadProductPhoto('pImgFile','pImg','pImgPreview')" />
+        </div>
+      </div>
+      <div class="imgbox" style="margin-top:10px">
+        <img id="pImgPreview" alt="" style="display:none" />
+        <div class="ph">Upload or paste a photo URL.</div>
+      </div>
 
       <div class="row space" style="margin-top:12px">
         <button class="btn" onclick="openBin('${esc(binId)}')">Back</button>
@@ -1454,6 +1529,10 @@ function viewFind(){
           </div>
         </div>
         <div class="divider"></div>
+         <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px">
+          ${p.image ? `<img class="miniThumb" alt="" src="${esc(p.image)}">` : `<div class="miniThumb ph">No photo</div>`}
+          <span class="muted">Photo preview</span>
+        </div>
         ${locHTML}
       </div>
     `;
@@ -1773,6 +1852,7 @@ function viewSetup(){
   const items = Object.values(STATE.products||{}).sort((a,b)=>(a.sku||"").localeCompare(b.sku||"")).slice(0,100).map(p=>{
     return `
       <div class="row space" style="gap:10px; flex-wrap:wrap">
+         ${p.image ? `<img class="miniThumb" alt="" src="${esc(p.image)}">` : `<div class="miniThumb ph">No photo</div>`}
         <span class="chip soft mono">${esc(p.sku)}</span>
         <span class="chip soft">${esc(p.name||"")}</span>
         <button class="btn" onclick="editProduct('${esc(p.sku)}')">Edit</button>
@@ -1808,7 +1888,20 @@ function createProduct(){
           <div class="muted">Category</div><input class="input" id="spCat" placeholder="hardware" />
         </div>
       </div>
-      <div class="muted">Photo</div><input class="input" id="spImg" placeholder="https://..." />
+     <div class="muted">Photo</div>
+      <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end">
+        <div style="flex:1; min-width:240px">
+          <input class="input" id="spImg" placeholder="https://..." oninput="setImagePreview('spImgPreview', this.value)" />
+        </div>
+        <div style="min-width:220px">
+          <input class="input" id="spImgFile" type="file" accept="image/*"
+                 onchange="uploadProductPhoto('spImgFile','spImg','spImgPreview')" />
+        </div>
+      </div>
+      <div class="imgbox" style="margin-top:10px">
+        <img id="spImgPreview" alt="" style="display:none" />
+        <div class="ph">Upload or paste a photo URL.</div>
+      </div>
       <div class="row space" style="margin-top:12px">
         <button class="btn" onclick="closeModal()">Cancel</button>
         <button class="btn primary" onclick="saveSetupProduct()">Save</button>
@@ -1824,8 +1917,8 @@ async function saveSetupProduct(){
   const category = (document.getElementById("spCat")?.value||"").trim();
   const image = (document.getElementById("spImg")?.value||"").trim();
   if(!sku){ toast("SKU required"); return; }
- const payload = {skku, name, desc, reorderPoint, category, image, oos:false };
- state.products[sku] = payload;
+ const payload = {sku, name, desc, reorderPoint, category, image, oos:false };
+ STATE.products[sku] = payload;
   saveState();
   closeModal();
   render();
@@ -1852,7 +1945,21 @@ function editProduct(sku){
           <div class="muted">Category</div><input class="input" id="epCat" value="${esc(p.category||"")}" />
         </div>
       </div>
-      <div class="muted">Photo</div><input class="input" id="epImg" value="${esc(p.image||"")}" />
+       <div class="muted">Photo</div>
+      <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end">
+        <div style="flex:1; min-width:240px">
+          <input class="input" id="epImg" value="${esc(p.image||"")}"
+                 oninput="setImagePreview('epImgPreview', this.value)" />
+        </div>
+        <div style="min-width:220px">
+          <input class="input" id="epImgFile" type="file" accept="image/*"
+                 onchange="uploadProductPhoto('epImgFile','epImg','epImgPreview')" />
+        </div>
+      </div>
+      <div class="imgbox" style="margin-top:10px">
+        <img id="epImgPreview" alt="" style="${p.image ? "" : "display:none"}" src="${esc(p.image||"")}" />
+        <div class="ph" style="${p.image ? "display:none" : ""}">${p.image ? "" : "Upload or paste a photo URL."}</div>
+      </div
       <div class="row space" style="margin-top:12px">
         <button class="btn danger" onclick="deleteSetupProduct('${esc(sku)}')">Delete</button>
         <button class="btn" onclick="closeModal()">Cancel</button>
@@ -1882,15 +1989,15 @@ async function saveEditProduct(sku){
 
 async function deleteSetupProduct(sku){
   if(!confirm("Delete this product?")) return;
-  delete STATE.products[sku];
-  saveState();
-  closeModal();
-  render();
   try{
     await deleteProductFromSupabase(sku);
+    delete STATE.products[sku];
+    saveState();
+    closeModal();
+    render();
   }catch(e){
     console.error("Supabase delete failed", e);
-    toast("Deleted locally; sync failed.");
+     toast(e.message || "Delete failed. Remove linked job parts first.");
   }
 }
 
@@ -1946,6 +2053,7 @@ const GLOBAL_HANDLERS = {
   go,
   back,
   closeModal,
+  goOffice,
   selectAisle,
   addLevel,
   confirmAddLevel,
@@ -1961,6 +2069,8 @@ const GLOBAL_HANDLERS = {
   openNewProduct,
   saveBin,
   saveNewProductAndAssign,
+  setImagePreview,
+  uploadProductPhoto,
   jumpToBin,
   openInventorySession,
   startInventory,

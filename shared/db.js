@@ -138,8 +138,31 @@ export async function deleteReceiptType(id) { return deleteTable('receipt_types'
 export async function listProducts() { return listTable('products'); }
 export async function createProduct(payload) { return insertTable('products', payload); }
 export async function updateProduct(id, payload) { return updateTable('products', id, payload); }
-export async function deleteProduct(id) { return deleteTable('products', id); }
+export async function deleteProduct(id) {
+  const { error } = await getClient().from('products').delete().eq('id', id);
+  if (error?.code === '23503') {
+    console.warn('Supabase delete blocked:', error);
+    throw new Error('This product is linked to job parts. Remove those references before deleting.');
+  }
+  handleError(error, 'Delete products');
+}
 
+export async function uploadProductImage(file, options = {}) {
+  const orgId = requireOrgId();
+  const bucket = options.bucket || 'product-images';
+  const prefix = options.prefix || 'products';
+  const safeName = (file?.name || 'upload')
+    .toLowerCase()
+    .replace(/[^a-z0-9.\-_]/g, '_');
+  const path = `${orgId}/${prefix}/${Date.now()}_${Math.random().toString(16).slice(2)}_${safeName}`;
+  const { error } = await getClient()
+    .storage
+    .from(bucket)
+    .upload(path, file, { upsert: true });
+  handleError(error, 'Upload product image');
+  const { data } = getClient().storage.from(bucket).getPublicUrl(path);
+  return data?.publicUrl || '';
+}
 export async function listTools() { return listTable('tools'); }
 export async function createTool(payload) { return insertTable('tools', payload); }
 export async function updateTool(id, payload) { return updateTable('tools', id, payload); }
