@@ -184,33 +184,106 @@ async function parseImportFile(file) {
   return null;
 }
 
+function recordFailedImportLine(failedRows, lineNumber, values, reason) {
+  failedRows.push({
+    lineNumber,
+    values: Array.isArray(values) ? [...values] : [],
+    reason: reason || null,
+  });
+}
+
+function showImportReport({ title, successCount, failedRows }) {
+  const body = document.createElement('div');
+  body.className = 'modal-body section-stack';
+
+  const summaryPanel = document.createElement('div');
+  summaryPanel.className = 'section-stack';
+  const successLine = document.createElement('div');
+  successLine.textContent = `Successful lines: ${successCount}`;
+  const failedLine = document.createElement('div');
+  failedLine.textContent = `Failed lines: ${failedRows.length}`;
+  summaryPanel.append(successLine, failedLine);
+
+  const failedPanel = document.createElement('div');
+  failedPanel.className = 'section-stack';
+  if (!failedRows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted';
+    empty.textContent = 'No failed lines.';
+    failedPanel.appendChild(empty);
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'section-stack';
+    failedRows.forEach((row) => {
+      const item = document.createElement('li');
+      const lineParts = [
+        `Line ${row.lineNumber}: ${row.values.map((value) => `${value}`.trim()).join(' | ')}`,
+      ];
+      if (row.reason) lineParts.push(`Reason: ${row.reason}`);
+      item.textContent = lineParts.join(' — ');
+      list.appendChild(item);
+    });
+    failedPanel.appendChild(list);
+  }
+
+  const tabRow = document.createElement('div');
+  tabRow.className = 'modal-foot';
+  const summaryBtn = document.createElement('button');
+  summaryBtn.type = 'button';
+  summaryBtn.className = 'pill tiny';
+  summaryBtn.textContent = 'Summary';
+  const failedBtn = document.createElement('button');
+  failedBtn.type = 'button';
+  failedBtn.className = 'pill tiny secondary';
+  failedBtn.textContent = `Failed lines (${failedRows.length})`;
+  failedBtn.disabled = failedRows.length === 0;
+  tabRow.append(summaryBtn, failedBtn);
+
+  function showPanel(panel) {
+    summaryPanel.hidden = panel !== summaryPanel;
+    failedPanel.hidden = panel !== failedPanel;
+    summaryBtn.classList.toggle('secondary', panel !== summaryPanel);
+    failedBtn.classList.toggle('secondary', panel !== failedPanel);
+  }
+
+  summaryBtn.addEventListener('click', () => showPanel(summaryPanel));
+  failedBtn.addEventListener('click', () => showPanel(failedPanel));
+
+  body.append(tabRow, summaryPanel, failedPanel);
+  openModalSimple({ title: title || 'Import report', bodyEl: body });
+  showPanel(summaryPanel);
+}
+
 async function handleImportCsv(event, fields, createHandler) {
   const file = event.target.files?.[0];
   if (!file) return;
   const parsed = await parseImportFile(file);
   if (!parsed) return;
   let successCount = 0;
-  let errorCount = 0;
+const failedRows= [];
   const { headers, rows } = parsed;
-  for (const values of rows) {
+  for (const [index, values] of rows.entries()) {
     const payload = {};
     headers.forEach((header, index) => {
       if (fields.find((field) => field.key === header)) {
         payload[header] = values[index] ?? '';
       }
     });
-    const hasValue = Object.values(payload).some((value) => '${value}'.trim());
+    const hasValue = Object.values(payload).some((value) => `${value}`.trim());
     if (!hasValue) continue;
     try {
       await createHandler(payload);
       successCount += 1;
     } catch (error) {
-      errorCount += 1;
+       recordFailedImportLine(failedRows, index + 2, values, error?.message || 'Import failed');
       console.error('Import error', error);
     }
   }
- const summary = `Import complete: ${successCount} added${errorCount ? `, ${errorCount} failed` : ''}.`;
-  showToast(summary);
+ showImportReport({
+    title: 'Import report',
+    successCount,
+    failedRows,
+  });
   event.target.value = '';
   await setView(state.currentView);
 }
@@ -236,8 +309,8 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   const inventoryMap = new Map(inventoryItems.map((item) => [item.product_id, item]));
 
    let successCount = 0;
-  let errorCount = 0;
-   for (const values of rows) {
+  const failedRows = [];
+  for (const [index, values] of rows.entries()) {
     const payload = {};
     headers.forEach((header, index) => {
       payload[header] = values[index] ?? '';
@@ -253,10 +326,14 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
     if (!product) {
       if (!name) {
         showToast('Missing part name for an import row.');
+        recordFailedImportLine(failedRows, index + 2, values, 'Missing par name')
         continue;
       }
       const shouldAdd = confirm(`Part "${name}" was not found. Add it to the parts table?`);
-      if (!shouldAdd) continue;
+      if (!shouldAdd) {
+        recordFailedImportLine(failedRows, index + 2, values, 'Skipped by user');
+        continue;
+      }
       try {
         product = await createProduct({ name, sku });
         if (state.boot?.products) state.boot.products.push(product);
@@ -264,6 +341,7 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
         if (product.sku) productBySku.set(product.sku.toLowerCase(), product);
       } catch (error) {
         showToast(`Unable to add part: ${error.message}`);
+         recordFailedImportLine(failedRows, index + 2, values, error?.message || 'Unable to add part');
         continue;
       }
     }
@@ -280,12 +358,15 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
       });
       successCount += 1;
     } catch (error) {
-       errorCount += 1;
+         recordFailedImportLine(failedRows, index + 2, values, error?.message || 'Inventory update failed');
       console.error('Inventory import error', error);
     }
   }
-  const summary = `Import complete: ${successCount} updated${errorCount ? `, ${errorCount} failed` : ''}.`;
-  showToast(summary);
+   showImportReport({
+    title: 'Inventory import report',
+    successCount,
+    failedRows,
+  });
   event.target.value = '';
   await renderTruckListView(truck, 'inventory');
 }
