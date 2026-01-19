@@ -19,28 +19,32 @@ const state = {
     products: null,
   },
 };
+let elements = {};
 
-const elements = {
-  aisleList: document.getElementById('aisle-list'),
-  shelfList: document.getElementById('shelf-list'),
-  binList: document.getElementById('bin-list'),
-  aisleTitle: document.getElementById('aisle-title'),
-  aisleSubtitle: document.getElementById('aisle-subtitle'),
-  shelfTitle: document.getElementById('shelf-title'),
-  shelfSubtitle: document.getElementById('shelf-subtitle'),
-  addAisle: document.getElementById('add-aisle'),
-  addShelf: document.getElementById('add-shelf'),
-  addBin: document.getElementById('add-bin'),
-  sideButtons: document.querySelectorAll('.side-toggle .btn'),
-  modalWrap: document.getElementById('modalWrap'),
-  modalTitle: document.getElementById('modalTitle'),
-  modalBody: document.getElementById('modalBody'),
-  modalClose: document.getElementById('modalClose'),
-  toast: document.getElementById('toast'),
-  navOffice: document.getElementById('nav_office'),
-  navHome: document.getElementById('nav_home'),
-  navMap: document.getElementById('nav_map'),
-};
+function cacheElements() {
+  elements = {
+    aisleList: document.getElementById('aisle-list'),
+    shelfList: document.getElementById('shelf-list'),
+    binList: document.getElementById('bin-list'),
+    aisleTitle: document.getElementById('aisle-title'),
+    aisleSubtitle: document.getElementById('aisle-subtitle'),
+    shelfTitle: document.getElementById('shelf-title'),
+    shelfSubtitle: document.getElementById('shelf-subtitle'),
+    addAisle: document.getElementById('add-aisle'),
+    addShelf: document.getElementById('add-shelf'),
+    addBin: document.getElementById('add-bin'),
+    sideButtons: document.querySelectorAll('.side-toggle .btn'),
+    modalWrap: document.getElementById('modalWrap'),
+    modalTitle: document.getElementById('modalTitle'),
+    modalBody: document.getElementById('modalBody'),
+    modalClose: document.getElementById('modalClose'),
+    toast: document.getElementById('toast'),
+    navOffice: document.getElementById('nav_office'),
+    navHome: document.getElementById('nav_home'),
+    navMap: document.getElementById('nav_map'),
+  };
+}
+
 
 function showToast(message) {
   elements.toast.textContent = message;
@@ -103,7 +107,7 @@ async function loadAisles() {
   } catch (error) {
     console.error(error);
     state.errors.aisles = error.message;
-    showToast(`Aisles load failed: ${error.message}`);
+    showToast(`Shelf systems load failed: ${error.message}`);
   }
   renderAisles();
 }
@@ -160,14 +164,26 @@ async function loadBins() {
 
 function aisleSubtitleText() {
   const aisle = state.aisles.find((item) => item.id === state.selectedAisleId);
-  if (!aisle) return 'Pick an aisle to see shelves.';
-  return `Orientation: ${aisle.orientation || '—'}`;
+  if (!aisle) return 'Pick a shelf side to see levels.';
+  const labels = aisleMarkersFor(aisle.id);
+  return `Orientation: ${aisle.orientation || '—'} · ${labels.sideB} → ${labels.sideA}`;
 }
 
 function shelfSubtitleText() {
   const shelf = state.shelves.find((item) => item.id === state.selectedShelfId);
-  if (!shelf) return 'Pick a shelf to see bins.';
+  if (!shelf) return 'Pick a shelf leveln to see bins.';
   return `Side ${shelf.side} · Level ${shelf.level_number}`;
+}
+
+function aisleMarkersFor(aisleId) {
+  const index = state.aisles.findIndex((item) => item.id === aisleId);
+  if (index === -1) {
+    return { sideA: 'Aisle —', sideB: 'Aisle —' };
+  }
+  return {
+    sideB: `Aisle ${index + 1}`,
+    sideA: `Aisle ${index + 2}`,
+  };
 }
 
 function renderAisles() {
@@ -177,18 +193,41 @@ function renderAisles() {
     return;
   }
   if (!state.aisles.length) {
-    elements.aisleList.innerHTML = '<div class="empty-state">No aisles yet. Add the first aisle.</div>';
-    return;
+       elements.aisleList.innerHTML = '<div class="empty-state">No shelf systems yet. Add the first shelf system.</div>'; 
   }
+
   state.aisles.forEach((aisle) => {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = `aisle-item${aisle.id === state.selectedAisleId ? ' active' : ''}`;
+   const labels = aisleMarkersFor(aisle.id);
+    const orientation = aisle.orientation === 'EW' ? 'EW' : 'NS';
+    const isSelected = aisle.id === state.selectedAisleId;
+    const item = document.createElement('div');
+    item.className = `shelf-system orientation-${orientation.toLowerCase()}${isSelected ? ' active' : ''}`;
+    item.dataset.aisleId = aisle.id;
+    item.draggable = true;
     item.innerHTML = `
-      <div><strong>${aisle.name || 'Aisle'}</strong></div>
-      <div class="muted">Orientation: ${aisle.orientation || '—'}</div>
+       <div class="aisle-marker marker-b">${labels.sideB}</div>
+      <div class="aisle-marker marker-a">${labels.sideA}</div>
+      <div class="shelf-body">
+        <button class="shelf-half side-b${isSelected && state.selectedSide === 'B' ? ' selected' : ''}" type="button" data-side="B">Side B</button>
+        <button class="shelf-half side-a${isSelected && state.selectedSide === 'A' ? ' selected' : ''}" type="button" data-side="A">Side A</button>
+      </div>
+      <div class="shelf-label">
+        <strong>${aisle.name || 'Shelf system'}</strong>
+        <span class="muted">Orientation ${orientation}</span>
+      </div>
     `;
-    item.addEventListener('click', () => selectAisle(aisle.id));
+  
+      item.querySelectorAll('.shelf-half').forEach((half) => {
+      half.addEventListener('click', (event) => {
+        event.stopPropagation();
+        selectShelfSide(aisle.id, half.dataset.side);
+      });
+    });
+
+    item.addEventListener('dragstart', handleAisleDragStart);
+    item.addEventListener('dragend', handleAisleDragEnd);
+    item.addEventListener('dragover', handleAisleDragOver);
+    item.addEventListener('drop', handleAisleDrop);
     elements.aisleList.appendChild(item);
   });
 }
@@ -196,16 +235,17 @@ function renderAisles() {
 function renderShelves() {
   elements.shelfList.innerHTML = '';
   const aisle = state.aisles.find((item) => item.id === state.selectedAisleId);
-  elements.aisleTitle.textContent = aisle ? `${aisle.name} · Side ${state.selectedSide}` : 'Aisle';
-  elements.aisleSubtitle.textContent = aisleSubtitleText();
+ const labels = aisle ? aisleMarkersFor(aisle.id) : { sideA: 'Aisle —', sideB: 'Aisle —' };
+  const sideLabel = state.selectedSide === 'A' ? labels.sideA : labels.sideB;
+  elements.aisleTitle.textContent = aisle ? `${aisle.name} · ${sideLabel} · Side ${state.selectedSide}` : 'Shelf System';
 
   elements.sideButtons.forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.side === state.selectedSide);
   });
 
   if (!state.selectedAisleId) {
-    elements.shelfList.innerHTML = '<div class="empty-state">Select an aisle to load shelves.</div>';
-    elements.shelfTitle.textContent = 'Shelf';
+    elements.shelfList.innerHTML = '<div class="empty-state">Select a shelf side to load levels.</div>';
+    elements.shelfTitle.textContent = 'Shelf Level';
     elements.shelfSubtitle.textContent = 'Pick a shelf to see bins.';
     renderBins();
     return;
@@ -217,7 +257,7 @@ function renderShelves() {
   }
 
   if (!state.shelves.length) {
-    elements.shelfList.innerHTML = '<div class="empty-state">No shelves yet. Add the first shelf.</div>';
+    elements.shelfList.innerHTML = '<div class="empty-state">No levels yet. Add the first shelf level.</div>';
   }
 
   state.shelves.forEach((shelf) => {
@@ -229,7 +269,7 @@ function renderShelves() {
     elements.shelfList.appendChild(item);
   });
 
-  elements.shelfTitle.textContent = state.selectedShelfId ? `Shelf ${state.selectedShelfId.slice(0, 6)}` : 'Shelf';
+  elements.shelfTitle.textContent = state.selectedShelfId ? `Shelf Level ${state.selectedShelfId.slice(0, 6)}` : 'Shelf Level';
   elements.shelfSubtitle.textContent = shelfSubtitleText();
 }
 
@@ -245,9 +285,9 @@ function binStatus(bin) {
 function renderBins() {
   elements.binList.innerHTML = '';
   if (!state.selectedShelfId) {
-    elements.binList.innerHTML = '<div class="empty-state">Select a shelf to load bins.</div>';
-    elements.shelfTitle.textContent = 'Shelf';
-    elements.shelfSubtitle.textContent = 'Pick a shelf to see bins.';
+    elements.binList.innerHTML = '<div class="empty-state">Select a shelf level to load bins.</div>';
+    elements.shelfTitle.textContent = 'Shelf Level';
+    elements.shelfSubtitle.textContent = 'Pick a shelf level to see bins.';
     return;
   }
 
@@ -293,6 +333,13 @@ function selectAisle(aisleId) {
   loadShelves();
 }
 
+function selectShelfSide(aisleId, side) {
+  state.selectedAisleId = aisleId;
+  state.selectedSide = side;
+  renderAisles();
+  loadShelves();
+}
+
 function selectShelf(shelfId) {
   state.selectedShelfId = shelfId;
   renderShelves();
@@ -303,6 +350,7 @@ function handleSideToggle(event) {
   const side = event.currentTarget.dataset.side;
   if (!side || side === state.selectedSide) return;
   state.selectedSide = side;
+  renderAisles();
   loadShelves();
 }
 
@@ -311,11 +359,11 @@ function nextSortOrder(items, key = 'sort_order') {
 }
 
 async function handleAddAisle() {
-  openModal('Add Aisle', `
+  openModal('Add Shelf System', `
     <form id="aisle-form" class="stack">
       <div class="field">
-        <label for="aisle-name">Aisle name</label>
-        <input id="aisle-name" name="name" required placeholder="Aisle 1" />
+        <label for="aisle-name">Shelf System name</label>
+        <input id="aisle-name" name="name" required placeholder="Shelf System 1" />
       </div>
       <div class="field">
         <label for="aisle-orientation">Orientation</label>
@@ -325,7 +373,7 @@ async function handleAddAisle() {
         </select>
       </div>
       <div class="row">
-        <button class="btn primary" type="submit">Create Aisle</button>
+        <button class="btn primary" type="submit">Create Shelf System</button>
         <button class="btn ghost" type="button" id="aisle-cancel">Cancel</button>
       </div>
     </form>
@@ -359,7 +407,7 @@ async function handleAddAisle() {
     if (error) {
       state.aisles = state.aisles.filter((item) => item.id !== optimistic.id);
       renderAisles();
-      showToast(`Add aisle failed: ${error.message}`);
+      showToast(`Add shelf system failed: ${error.message}`);
       return;
     }
     const index = state.aisles.findIndex((item) => item.id === optimistic.id);
@@ -372,7 +420,7 @@ async function handleAddAisle() {
 
 async function handleAddShelf() {
   if (!state.selectedAisleId) {
-    showToast('Select an aisle first.');
+    showToast('Select a shelf system side first.');
     return;
   }
   const nextLevel = nextSortOrder(state.shelves, 'level_number');
@@ -567,6 +615,64 @@ async function handleDrop(event) {
   showToast('Bin order saved.');
 }
 
+let draggedAisleId = null;
+let aisleDragSnapshot = [];
+
+function handleAisleDragStart(event) {
+  draggedAisleId = event.currentTarget.dataset.aisleId;
+  aisleDragSnapshot = state.aisles.slice();
+  event.dataTransfer.effectAllowed = 'move';
+  event.currentTarget.classList.add('dragging');
+}
+
+function handleAisleDragEnd(event) {
+  event.currentTarget.classList.remove('dragging');
+}
+
+function handleAisleDragOver(event) {
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+}
+
+async function handleAisleDrop(event) {
+  event.preventDefault();
+  const targetId = event.currentTarget.dataset.aisleId;
+  if (!draggedAisleId || draggedAisleId === targetId) return;
+
+  const ids = state.aisles.map((aisle) => aisle.id);
+  const fromIndex = ids.indexOf(draggedAisleId);
+  const toIndex = ids.indexOf(targetId);
+  if (fromIndex === -1 || toIndex === -1) return;
+
+  const reordered = state.aisles.slice();
+  const [moved] = reordered.splice(fromIndex, 1);
+  reordered.splice(toIndex, 0, moved);
+  state.aisles = reordered.map((aisle, index) => ({
+    ...aisle,
+    sort_order: index + 1,
+  }));
+  renderAisles();
+
+  const updates = state.aisles.map((aisle) => ({
+    id: aisle.id,
+    sort_order: aisle.sort_order,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase
+    .from('aisles')
+    .upsert(updates, { onConflict: 'id' });
+
+  if (error) {
+    state.aisles = aisleDragSnapshot;
+    renderAisles();
+    showToast(`Reorder failed: ${error.message}`);
+    return;
+  }
+  showToast('Shelf system order saved.');
+}
+
+
 function bindEvents() {
   elements.addAisle.addEventListener('click', handleAddAisle);
   elements.addShelf.addEventListener('click', handleAddShelf);
@@ -577,8 +683,38 @@ function bindEvents() {
     if (event.target === elements.modalWrap) closeModal();
   });
 }
+function missingElements() {
+  const required = [
+    ['aisleList', elements.aisleList],
+    ['shelfList', elements.shelfList],
+    ['binList', elements.binList],
+    ['aisleTitle', elements.aisleTitle],
+    ['aisleSubtitle', elements.aisleSubtitle],
+    ['shelfTitle', elements.shelfTitle],
+    ['shelfSubtitle', elements.shelfSubtitle],
+    ['addAisle', elements.addAisle],
+    ['addShelf', elements.addShelf],
+    ['addBin', elements.addBin],
+    ['modalWrap', elements.modalWrap],
+    ['modalTitle', elements.modalTitle],
+    ['modalBody', elements.modalBody],
+    ['modalClose', elements.modalClose],
+    ['toast', elements.toast],
+    ['navOffice', elements.navOffice],
+    ['navHome', elements.navHome],
+    ['navMap', elements.navMap],
+  ];
+
+  return required.filter(([, element]) => !element).map(([name]) => name);
+}
 
 async function init() {
+    cacheElements();
+  const missing = missingElements();
+  if (missing.length) {
+    console.error(`Inventory app init failed. Missing elements: ${missing.join(', ')}`);
+    return;
+  }
   setNavHandlers();
   bindEvents();
   await loadProducts();
@@ -586,4 +722,8 @@ async function init() {
   await loadShelves();
 }
 
-init();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
