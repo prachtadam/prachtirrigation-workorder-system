@@ -189,6 +189,8 @@ async function handleImportCsv(event, fields, createHandler) {
   if (!file) return;
   const parsed = await parseImportFile(file);
   if (!parsed) return;
+  let successCount = 0;
+  let errorCount = 0;
   const { headers, rows } = parsed;
   for (const values of rows) {
     const payload = {};
@@ -197,14 +199,18 @@ async function handleImportCsv(event, fields, createHandler) {
         payload[header] = values[index] ?? '';
       }
     });
+    const hasValue = Object.values(payload).some((value) => '${value}'.trim());
+    if (!hasValue) continue;
     try {
       await createHandler(payload);
+      successCount += 1;
     } catch (error) {
-      showToast(`Import error: ${error.message}`);
-      break;
+      errorCount += 1;
+      console.error('Import error', error);
     }
   }
-  showToast('Import complete. Refreshing list.');
+ const summary = `Import complete: ${successCount} added${errorCount ? `, ${errorCount} failed` : ''}.`;
+  showToast(summary);
   event.target.value = '';
   await setView(state.currentView);
 }
@@ -229,11 +235,15 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
   });
   const inventoryMap = new Map(inventoryItems.map((item) => [item.product_id, item]));
 
+   let successCount = 0;
+  let errorCount = 0;
    for (const values of rows) {
     const payload = {};
     headers.forEach((header, index) => {
       payload[header] = values[index] ?? '';
     });
+     const hasValue = Object.values(payload).some((value) => `${value}`.trim());
+    if (!hasValue) continue;
     const sku = payload.sku?.trim();
     const name = payload.name?.trim();
     const minRaw = payload.min_qty ?? payload.minimum_qty ?? payload.min;
@@ -268,12 +278,14 @@ async function handleInventoryImportCsv(event, truck, inventoryItems) {
         min_qty,
         origin: 'permanent',
       });
+      successCount += 1;
     } catch (error) {
-      showToast(`Import error: ${error.message}`);
-      break;
+       errorCount += 1;
+      console.error('Inventory import error', error);
     }
   }
-  showToast('Import complete. Refreshing list.');
+  const summary = `Import complete: ${successCount} updated${errorCount ? `, ${errorCount} failed` : ''}.`;
+  showToast(summary);
   event.target.value = '';
   await renderTruckListView(truck, 'inventory');
 }
@@ -1235,6 +1247,10 @@ async function renderPartsView() {
   viewSubtitle.textContent = 'Master product list and shelf quantities.';
   viewActions.innerHTML = '';
 
+   const searchInput = document.createElement('input');
+  searchInput.className = 'search';
+  searchInput.type = 'search';
+  searchInput.placeholder = 'Search parts by name / SKU / description / shelf…';
   const addBtn = document.createElement('button');
   addBtn.className = 'action';
   addBtn.type = 'button';
@@ -1292,6 +1308,12 @@ async function renderPartsView() {
     inventoryMap.get(item.product_id).set(item.truck_id, Number(item.qty || 0));
   });
 
+  const wrapper = document.createElement('div');
+  wrapper.className = 'section-stack';
+
+  const topControls = document.createElement('div');
+  topControls.className = 'top-controls';
+  topControls.append(searchInput);
   const listCard = document.createElement('div');
   listCard.className = 'card list';
 
@@ -1404,68 +1426,90 @@ async function renderPartsView() {
 
   addBtn.addEventListener('click', () => openPartModal());
 
-  parts.forEach((part) => {
-    const row = document.createElement('button');
-    row.className = 'pill parts-row';
-    row.type = 'button';
+  
 
-    const nameWrap = document.createElement('div');
-    nameWrap.className = 'parts-name';
-    nameWrap.innerHTML = `
-      <strong>${escapeHtml(part.name || 'Part')}</strong>
-      <div class="parts-sku">${escapeHtml(part.sku || 'SKU N/A')}</div>
-    `;
+  const renderList = () => {
+    const q = searchInput.value.trim().toLowerCase();
+    listCard.innerHTML = '';
 
-    const desc = document.createElement('div');
-    desc.className = 'parts-desc';
-    desc.textContent = part.description || 'No description provided.';
-
-    const qtyWrap = document.createElement('div');
-    qtyWrap.className = 'parts-qty';
-
-    trucks.forEach((truck, index) => {
-      const qty = inventoryMap.get(part.id)?.get(truck.id) || 0;
-      const pill = document.createElement('span');
-      pill.className = 'qty-pill';
-      pill.innerHTML = `
-        <span class="pill-label">${escapeHtml(truck.truck_identifier || `Truck ${index + 1}`)}</span>
-        <span class="pill-num">${qty}</span>
-      `;
-      const palette = truckPalette[index % truckPalette.length];
-      pill.style.background = palette.bg;
-      pill.style.borderColor = palette.border;
-      pill.style.color = palette.text;
-      qtyWrap.appendChild(pill);
+      const filtered = parts.filter((part) => {
+      if (!q) return true;
+      const haystack = [part.name, part.sku, part.description, part.shelf]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
     });
 
-    const shelfWrap = document.createElement('div');
-    shelfWrap.className = 'parts-shelf';
-    const shelfPill = document.createElement('span');
-    shelfPill.className = 'qty-pill';
-    shelfPill.innerHTML = `
-      <span class="pill-label">Shelf</span>
-      <span class="pill-num">${escapeHtml(part.shelf || 'Unassigned')}</span>
-    `;
-    const onHand = part.quantity_on_hand ?? part.minimum_qty ?? 0;
-    const onHandPill = document.createElement('span');
-    onHandPill.className = 'qty-pill';
-    onHandPill.innerHTML = `
-      <span class="pill-label">Qty on Hand</span>
-      <span class="pill-num">${onHand}</span>
-    `;
-    shelfWrap.append(shelfPill, onHandPill)
+      if (!filtered.length) {
+      listCard.innerHTML = parts.length ? '<p>No matching parts found.</p>' : '<p>No parts yet.</p>';
+      return;
+    }
 
-    row.append(nameWrap, desc, qtyWrap, shelfWrap);
-    row.addEventListener('click', () => openPartModal({ part }));
-    listCard.appendChild(row);
-  });
+     filtered.forEach((part) => {
+      const row = document.createElement('button');
+      row.className = 'pill parts-row';
+      row.type = 'button';
 
-  if (!parts.length) {
-    listCard.innerHTML += '<p>No parts yet.</p>';
-  }
+      const nameWrap = document.createElement('div');
+      nameWrap.className = 'parts-name';
+      nameWrap.innerHTML = `
+        <strong>${escapeHtml(part.name || 'Part')}</strong>
+        <div class="parts-sku">${escapeHtml(part.sku || 'SKU N/A')}</div>
+      `;
+       const desc = document.createElement('div');
+      desc.className = 'parts-desc';
+      desc.textContent = part.description || 'No description provided.';
+
+   
+  const qtyWrap = document.createElement('div');
+      qtyWrap.className = 'parts-qty';
+
+      trucks.forEach((truck, index) => {
+        const qty = inventoryMap.get(part.id)?.get(truck.id) || 0;
+        const pill = document.createElement('span');
+        pill.className = 'qty-pill';
+        pill.innerHTML = `
+          <span class="pill-label">${escapeHtml(truck.truck_identifier || `Truck ${index + 1}`)}</span>
+          <span class="pill-num">${qty}</span>
+        `;
+        const palette = truckPalette[index % truckPalette.length];
+        pill.style.background = palette.bg;
+        pill.style.borderColor = palette.border;
+        pill.style.color = palette.text;
+        qtyWrap.appendChild(pill);
+      });
+
+  const shelfWrap = document.createElement('div');
+      shelfWrap.className = 'parts-shelf';
+      const shelfPill = document.createElement('span');
+      shelfPill.className = 'qty-pill';
+      shelfPill.innerHTML = `
+        <span class="pill-label">Shelf</span>
+        <span class="pill-num">${escapeHtml(part.shelf || 'Unassigned')}</span>
+      `;
+      const onHand = part.quantity_on_hand ?? part.minimum_qty ?? 0;
+      const onHandPill = document.createElement('span');
+      onHandPill.className = 'qty-pill';
+      onHandPill.innerHTML = `
+        <span class="pill-label">Qty on Hand</span>
+        <span class="pill-num">${onHand}</span>
+      `;
+      shelfWrap.append(shelfPill, onHandPill)
+
+      row.append(nameWrap, desc, qtyWrap, shelfWrap);
+      row.addEventListener('click', () => openPartModal({ part }));
+      listCard.appendChild(row);
+    });
+  };
+
+  searchInput.addEventListener('input', renderList);
+  renderList();
+
+  wrapper.append(topControls, listCard);
 
   viewContainer.innerHTML = '';
-  viewContainer.appendChild(listCard);
+  viewContainer.appendChild(wrapper);
 }
 async function renderRequests() {
   viewTitle.textContent = 'Requests';
