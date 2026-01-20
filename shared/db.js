@@ -426,10 +426,72 @@ export async function listJobDiagnostics(jobId) {
 export async function addJobDiagnostic(payload) { return insertTable('job_diagnostics', payload); }
 export async function deleteJobDiagnostic(id) { return deleteTable('job_diagnostics', id); }
 
-export async function listDiagnosticWorkflows() { return listTable('diagnostic_workflows'); }
-export async function createDiagnosticWorkflow(payload) { return insertTable('diagnostic_workflows', payload); }
-export async function updateDiagnosticWorkflow(id, payload) { return updateTable('diagnostic_workflows', id, payload); }
-export async function deleteDiagnosticWorkflow(id) { return deleteTable('diagnostic_workflows', id); }
+const DIAGNOSTIC_WORKFLOW_TABLES = ['diagnostic_workflows', 'diagnostic_workflow'];
+
+async function listDiagnosticWorkflowTable(table) {
+  const orgId = requireOrgId();
+  return getClient()
+    .from(table)
+    .select('*')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: true });
+}
+
+async function insertDiagnosticWorkflowTable(table, payload) {
+  const orgId = requireOrgId();
+  return getClient()
+    .from(table)
+    .insert({ ...payload, org_id: orgId })
+    .select()
+    .single();
+}
+
+async function updateDiagnosticWorkflowTable(table, id, payload) {
+  return getClient()
+    .from(table)
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+}
+
+async function deleteDiagnosticWorkflowTable(table, id) {
+  return getClient()
+    .from(table)
+    .delete()
+    .eq('id', id);
+}
+
+async function withDiagnosticWorkflowTable(action, context) {
+  let lastError;
+  for (const table of DIAGNOSTIC_WORKFLOW_TABLES) {
+    const { data, error } = await action(table);
+    if (!error) return data;
+    if (error.code !== 'PGRST205') {
+      handleError(error, context);
+    }
+    lastError = error;
+  }
+  handleError(lastError, context);
+  return null;
+}
+
+export async function listDiagnosticWorkflows() {
+  const data = await withDiagnosticWorkflowTable(listDiagnosticWorkflowTable, 'Load diagnostic workflows');
+  return data || [];
+}
+
+export async function createDiagnosticWorkflow(payload) {
+  return withDiagnosticWorkflowTable((table) => insertDiagnosticWorkflowTable(table, payload), 'Create diagnostic workflow');
+}
+
+export async function updateDiagnosticWorkflow(id, payload) {
+  return withDiagnosticWorkflowTable((table) => updateDiagnosticWorkflowTable(table, id, payload), 'Update diagnostic workflow');
+}
+
+export async function deleteDiagnosticWorkflow(id) {
+  await withDiagnosticWorkflowTable((table) => deleteDiagnosticWorkflowTable(table, id), 'Delete diagnostic workflow');
+}
 
 export async function listDiagnosticWorkflowBrands(workflowId) {
   const orgId = requireOrgId();
