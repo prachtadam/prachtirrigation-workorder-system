@@ -804,11 +804,43 @@ textarea {
   min-height: 40px;
 }
 
-.checklist label {
-  display: flex;
-  gap: 8px;
+.checklist-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.checklist-item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
   align-items: flex-start;
   font-size: 14px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.checklist-item input {
+  margin-top: 2px;
+}
+
+.misc-parts {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  gap: 10px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .misc-parts {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .misc-parts button {
+    grid-column: span 2;
+  }
 }
 
 @media (min-width: 720px) {

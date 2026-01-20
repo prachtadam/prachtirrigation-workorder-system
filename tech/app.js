@@ -66,6 +66,7 @@ const state = {
     stepStartedAt: null,
     repairStartedAt: null,
   },
+  miscPartsByJob: {},
 };
 const mapState = {
   map: null,
@@ -124,6 +125,11 @@ function formatElapsed(seconds) {
   const remainder = minutes % 60;
   if (hours) return `${hours}h ${remainder}m`;
   return `${remainder}m`;
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return '0m';
+  return formatElapsed(seconds);
 }
 
 function hashWorkflowPayload(payload) {
@@ -290,7 +296,9 @@ async function executeOrQueue(action, payload, handler) {
     showToast('Saved offline. Will sync when online.');
     return null;
   }
-  return handler(payload);
+  const result = await handler(payload);
+  await refreshAppState();
+  return result;
 }
 
 async function logDiagnosticsEvent(runId, nodeId, eventType, payload = {}) {
@@ -304,6 +312,14 @@ async function logDiagnosticsEvent(runId, nodeId, eventType, payload = {}) {
 
 async function syncOutbox() {
   await processOutbox(state.offlineQueueHandlers, showToast);
+}
+
+async function refreshAppState() {
+  if (isOffline()) return;
+  await loadBoot();
+  if (state.currentJob?.id) {
+    state.currentJob = await getJob(state.currentJob.id);
+  }
 }
 
 function screenContainer(content) {
@@ -525,13 +541,6 @@ function renderDrawer() {
         </div>
         <span class="chev">›</span>
       </button>
-      <button class="menuBtn" data-action="inshop">
-        <div class="menuLeft">
-          <div class="name">Set Inshop Status</div>
-          <div class="desc">Mark tech as in shop</div>
-        </div>
-        <span class="chev">›</span>
-      </button>
       <button class="menuBtn" data-action="current">
         <div class="menuLeft">
           <div class="name">Current Inventory</div>
@@ -583,7 +592,6 @@ function renderDrawer() {
       const action = btn.dataset.action;
       toggleDrawer(false);
       if (action === 'start-inventory') return startInventoryInApp();
-      if (action === 'inshop') return setTechInshopStatus();
       if (action === 'current') return renderInventory();
       if (action === 'perform-inventory') return startInventoryInApp();
       if (action === 'in-shop') {
@@ -815,8 +823,8 @@ async function renderInventory() {
       product_id: productId,
       qty,
     };
-    if (!existing) payload.renderLogin = 'tech_added';
-    await executeOrQueue('upsertInventory', payload, upserTruckInventory);
+if (!existing) payload.origin = 'tech_added';
+    await executeOrQueue('upsertInventory', payload, upsertTruckInventory);
     renderInventory();
   });
    panel.querySelector('#inventory-back').addEventListener('click', renderHome);
@@ -1272,7 +1280,7 @@ async function renderTechMap() {
     map.setView([39.5, -98.35], 4);
   }
 }
-function renderJobCard(job) {
+async function renderJobCard(job) {
   state.currentJob = job;
   const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
@@ -1297,6 +1305,57 @@ function renderJobCard(job) {
       </div>
     </div>
   `;
+  const reportCard = document.createElement('div');
+  reportCard.className = 'card';
+  reportCard.innerHTML = `
+    <h3>Work Order Reports</h3>
+    <div class="muted">Loading latest report for this field...</div>
+  `;
+  panel.appendChild(reportCard);
+
+  if (isOffline()) {
+    reportCard.innerHTML = `
+      <h3>Work Order Reports</h3>
+      <div class="muted">Reports unavailable offline.</div>
+    `;
+  } else if (job.field_id) {
+    try {
+      const fieldJobs = await listJobs({ fieldId: job.field_id });
+      const sortedJobs = [...fieldJobs].sort((a, b) => {
+        const aDate = new Date(a.finished_at || a.created_at || 0).getTime();
+        const bDate = new Date(b.finished_at || b.created_at || 0).getTime();
+        return bDate - aDate;
+      });
+      let latestReport = null;
+      sortedJobs.some((fieldJob) => {
+        const attachments = fieldJob.attachments || [];
+        const match = attachments.find((att) => att.attachment_type?.includes('report'));
+        if (match) {
+          latestReport = match;
+          return true;
+        }
+        return false;
+      });
+      if (latestReport?.file_url) {
+        reportCard.innerHTML = `
+          <h3>Work Order Reports</h3>
+          <a class="pill" href="${latestReport.file_url}" target="_blank" rel="noreferrer">
+            Open Latest Report
+          </a>
+        `;
+      } else {
+        reportCard.innerHTML = `
+          <h3>Work Order Reports</h3>
+          <div class="muted">No previous reports found for this field.</div>
+        `;
+      }
+    } catch (error) {
+      reportCard.innerHTML = `
+        <h3>Work Order Reports</h3>
+        <div class="muted">Unable to load report.</div>
+      `;
+    }
+  }
   panel.querySelector('#job-card-back').addEventListener('click', renderOpenJobs);
   panel.querySelector('#job-card-secondary-back').addEventListener('click', renderOpenJobs);
   panel.querySelector('#take-job').addEventListener('click', () => renderRoutePrompt(job));
@@ -1327,7 +1386,8 @@ function renderRoutePrompt(job) {
     routeBtn.addEventListener('click', async () => {
       await takeJob(job);
       if (job.fields?.lat && job.fields?.lon) {
-        window.open(`https://maps.google.com/?q=${job.fields.lat},${job.fields.lon}`);
+     const mapsUrl = `https://maps.google.com/?q=${job.fields.lat},${job.fields.lon}`;
+        window.location.assign(mapsUrl);
       } else {
         showToast('No coordinates set for this field.');
       }
@@ -1449,11 +1509,13 @@ async function renderWorkFlowStart(job) {
  const card = document.createElement('div');
   card.className = 'card';
   card.innerHTML = `
-    <h3>Select Workflow</h3>
-    <div class="card">
-      <strong>${job.customers?.name}</strong>
-      <div class="muted">${job.fields?.name}</div>
-      <div>${job.job_types?.name}</div>
+    <h3>Problem Found</h3>
+    <div class="pill">
+      <div>
+        <strong>${job.customers?.name}</strong>
+        <div class="muted">${job.fields?.name}</div>
+      </div>
+      <span class="badge">${job.job_types?.name || ''}</span>
     </div>
     <label>Problem Title</label>
     <select id="workflow-select"></select>
@@ -1468,8 +1530,9 @@ async function renderWorkFlowStart(job) {
 
   const runs = await listDiagnosticWorkflowRuns(job.id);
   const activeRun = runs.find((run) => run.status === 'in_progress');
+  let resumeCard;
   if (activeRun) {
-    const resumeCard = document.createElement('div');
+    resumeCard = document.createElement('div');
     resumeCard.className = 'card';
     resumeCard.innerHTML = `
       <h4>Resume In-Progress Workflow</h4>
@@ -1480,7 +1543,7 @@ async function renderWorkFlowStart(job) {
       await resumeWorkflowRun(job, activeRun);
     });
   }
-  panel.appendChild(resumeCard);
+  if (resumeCard) panel.appendChild(resumeCard);
 
   const workflows = await listDiagnosticWorkflows();
   const workflowSelect = card.querySelector('#workflow-select');
@@ -2084,6 +2147,13 @@ async function renderRepair(job) {
       <select id="part-select"></select>
       <input id="part-qty" type="number" value="1" min="1" />
       <button class="action success" id="add-part">Add Part</button>
+      <h4>Misc Parts</h4>
+      <div class="misc-parts">
+        <input id="misc-desc" type="text" placeholder="Part description" />
+        <input id="misc-qty" type="number" min="1" value="1" />
+        <button class="action secondary" id="add-misc">Add Misc Part</button>
+      </div>
+      <div class="list" id="misc-list"></div>
       <div class="list" id="parts-list"></div>
       <div class="actions">
         <button class="action" id="complete">Complete Job</button>
@@ -2093,13 +2163,17 @@ async function renderRepair(job) {
     </div>
   `;
 
-  const select = panel.querySelector('#part-select');
-  inventory.forEach((item) => {
-    const option = document.createElement('option');
-    option.value = item.product_id;
-    option.textContent = `${item.products?.name} (${item.qty})`;
-    select.appendChild(option);
-  });
+   if (!inventory.length) {
+    select.innerHTML = '<option value="">No truck inventory available</option>';
+    panel.querySelector('#add-part').disabled = true;
+  } else {
+    inventory.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.product_id;
+      option.textContent = `${item.products?.name || 'Part'} (${item.qty})`;
+      select.appendChild(option);
+    });
+  }
 
   const list = panel.querySelector('#parts-list');
   parts.forEach((part) => {
@@ -2132,16 +2206,55 @@ async function renderRepair(job) {
     renderRepair(job);
   });
 
+
+ const miscParts = state.miscPartsByJob[job.id] || [];
+  const miscList = panel.querySelector('#misc-list');
+  const renderMiscList = () => {
+    miscList.innerHTML = '';
+    miscParts.forEach((part, index) => {
+      const pill = document.createElement('button');
+      pill.className = 'pill';
+      pill.innerHTML = `
+        <div>${part.description} (x${part.qty})</div>
+        <span class="badge">Remove</span>
+      `;
+      pill.addEventListener('click', () => {
+        miscParts.splice(index, 1);
+        state.miscPartsByJob[job.id] = miscParts;
+        renderMiscList();
+      });
+      miscList.appendChild(pill);
+    });
+  };
+  renderMiscList();
+  panel.querySelector('#add-misc').addEventListener('click', () => {
+    const desc = panel.querySelector('#misc-desc').value.trim();
+    const qty = parseInt(panel.querySelector('#misc-qty').value, 10);
+    if (!desc || !qty) {
+      showToast('Enter misc part description and quantity.');
+      return;
+    }
+    miscParts.push({ description: desc, qty });
+    state.miscPartsByJob[job.id] = miscParts;
+    panel.querySelector('#misc-desc').value = '';
+    panel.querySelector('#misc-qty').value = 1;
+    renderMiscList();
+  });
+
   panel.querySelector('#complete').addEventListener('click', async () => {
     const desc = panel.querySelector('#repair-desc').value.trim();
     if (!desc) {
       showToast('Repair description required.');
       return;
     }
-    await executeOrQueue('updateJob', { jobId: job.id, payload: { repair_description: desc } }, ({ jobId, payload }) =>
+   const miscSummary = miscParts.length
+      ? `\n\nMisc parts:\n${miscParts.map((part) => `- ${part.description} (x${part.qty})`).join('\n')}`
+      : '';
+    const finalDesc = `${desc}${miscSummary}`;
+    await executeOrQueue('updateJob', { jobId: job.id, payload: { repair_description: finalDesc } }, ({ jobId, payload }) =>
       updateJob(jobId, payload)
     );
-    await executeOrQueue('addRepair', { job_id: job.id, description: desc }, addJobRepair);
+    await executeOrQueue('addRepair', { job_id: job.id, description: finalDesc }, addJobRepair);
     renderChecklist(job);
   });
  panel.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_REPAIR));
@@ -2162,14 +2275,16 @@ function renderChecklist(job) {
     </div>
     <div class="card checklist">
       <h3>Final Checklist</h3>
-      <label><input type="checkbox" /> Verify all repair parts are tight, affixed, and in original appearance</label>
-      <label><input type="checkbox" /> Verify all parts are accounted for and trash is picked up</label>
-      <label><input type="checkbox" /> Adjust timer in MCP to 80% and select a direction if water is required to verify repair</label>
-      <label><input type="checkbox" /> Start system and verify all towers are moving (if unable to see all towers, verify 1st tower moves at least 3 times)</label>
-      <label><input type="checkbox" /> If water running verify end gun turns off and on</label>
-      <label><input type="checkbox" /> Contact supervisor or customer if system is desired to be left running</label>
-      <label><input type="checkbox" /> If desired to be left running make changes and finish; if no confirmation turn off system and main power disconnect</label>
-      <label><input type="checkbox" /> Verify all panel doors are closed</label>
+      <div class="checklist-list">
+        <label class="checklist-item"><input type="checkbox" /> Verify all repair parts are tight, affixed, and in original appearance</label>
+        <label class="checklist-item"><input type="checkbox" /> Verify all parts are accounted for and trash is picked up</label>
+        <label class="checklist-item"><input type="checkbox" /> Adjust timer in MCP to 80% and select a direction if water is required to verify repair</label>
+        <label class="checklist-item"><input type="checkbox" /> Start system and verify all towers are moving (if unable to see all towers, verify 1st tower moves at least 3 times)</label>
+        <label class="checklist-item"><input type="checkbox" /> If water running verify end gun turns off and on</label>
+        <label class="checklist-item"><input type="checkbox" /> Contact supervisor or customer if system is desired to be left running</label>
+        <label class="checklist-item"><input type="checkbox" /> If desired to be left running make changes and finish; if no confirmation turn off system and main power disconnect</label>
+        <label class="checklist-item"><input type="checkbox" /> Verify all panel doors are closed</label>
+      </div>
       <textarea id="unable-reason" placeholder="Unable to perform reason (if needed)"></textarea>
       <div class="actions">
         <button class="action" id="complete">Complete</button>
@@ -2183,7 +2298,7 @@ function renderChecklist(job) {
   const completeBtn = panel.querySelector('#complete');
   const unableBtn = panel.querySelector('#unable');
 
-  completeBtn.addEventListener('click', () => finalizeJob(job, checkboxes, false));
+  completeBtn.addEventListener('click', () => renderCompletionPreview(job, checkboxes));
   unableBtn.addEventListener('click', () => finalizeJob(job, checkboxes, true));
  panel.querySelector('#start-another').addEventListener('click', () => renderWorkflowStart(job));
    panel.querySelector('#back').addEventListener('click', () => {
@@ -2197,9 +2312,101 @@ function renderChecklist(job) {
   screenContainer(container);
 }
 
-async function finalizeJob(job, checkboxes, allowIncomplete) {
+async function renderCompletionPreview(job,checkboxes){
   const allChecked = checkboxes.every((cb) => cb.checked);
-  const reason = document.getElementById('unable-reason').value.trim();
+  if (!allChecked) {
+    showToast('Complete all checklist items or use Unable to Perform.');
+    return;
+  }
+  if (isOffline()) {
+    showToast('Completion preview unavailable offline.');
+    return;
+  }
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="preview-back">←</button>
+      <h2>Completion Preview</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+  `;
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h3>Review Work Order</h3>
+    <div class="pill">
+      <div>
+        <strong>${job.customers?.name || ''}</strong>
+        <div class="muted">${job.fields?.name || ''}</div>
+      </div>
+      <span class="badge">${job.job_types?.name || ''}</span>
+    </div>
+  `;
+  panel.appendChild(card);
+
+  const [diagnostics, repairs, parts] = await Promise.all([
+    listJobDiagnostics(job.id),
+    listJobRepairs(job.id),
+    listJobParts(job.id),
+  ]);
+  const durations = await getJobStatusDurations(job.id);
+
+  const details = document.createElement('div');
+  details.className = 'card';
+  details.innerHTML = `
+    <h4>Details</h4>
+    <div><strong>Repair:</strong> ${job.repair_description || repairs[repairs.length - 1]?.description || 'N/A'}</div>
+    <div><strong>Problem:</strong> ${job.problem_description || 'N/A'}</div>
+  `;
+  panel.appendChild(details);
+
+  const partsCard = document.createElement('div');
+  partsCard.className = 'card';
+  partsCard.innerHTML = `
+    <h4>Parts Used</h4>
+    ${parts.length ? parts.map((part) => `<div class="pill">${part.products?.name || 'Part'} (x${part.qty})</div>`).join('') : '<div class="muted">No parts recorded.</div>'}
+  `;
+  panel.appendChild(partsCard);
+
+  const diagCard = document.createElement('div');
+  diagCard.className = 'card';
+  diagCard.innerHTML = `
+    <h4>Diagnostics</h4>
+    ${diagnostics.length ? diagnostics.map((entry) => `<div class="pill">${entry.component_checked}: ${entry.check_results}</div>`).join('') : '<div class="muted">No diagnostics recorded.</div>'}
+  `;
+  panel.appendChild(diagCard);
+
+  const timeCard = document.createElement('div');
+  timeCard.className = 'card';
+  timeCard.innerHTML = `
+    <h4>Time in Status</h4>
+    <div class="pill">Open: ${formatDuration(durations.open)}</div>
+    <div class="pill">On The Way: ${formatDuration(durations.on_the_way)}</div>
+    <div class="pill">Diagnostics: ${formatDuration(durations.on_site_diagnostics)}</div>
+    <div class="pill">Repair: ${formatDuration(durations.on_site_repair)}</div>
+    <div class="pill">Paused: ${formatDuration(durations.paused)}</div>
+  `;
+  panel.appendChild(timeCard);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.innerHTML = `
+    <button class="action" id="confirm-complete">Submit Completion</button>
+    <button class="action secondary" id="edit-checklist">Back to Checklist</button>
+  `;
+  panel.appendChild(actions);
+
+  panel.querySelector('#preview-back').addEventListener('click', () => renderChecklist(job));
+  actions.querySelector('#edit-checklist').addEventListener('click', () => renderChecklist(job));
+  actions.querySelector('#confirm-complete').addEventListener('click', () => finalizeJob(job, checkboxes, false));
+  screenContainer(container);
+}
+
+async function finalizeJob(job, checkboxes, allowIncomplete, reasonOverride) {
+  const allChecked = checkboxes.every((cb) => cb.checked);
+  const reasonInput = document.getElementById('unable-reason');
+  const reason = reasonOverride !== undefined ? reasonOverride : (reasonInput ? reasonInput.value.trim() : '');
   if (!allChecked && !allowIncomplete) {
     showToast('Complete all checklist items or use Unable to Perform.');
     return;
@@ -2224,6 +2431,7 @@ async function finalizeJob(job, checkboxes, allowIncomplete) {
     await enqueueAction('generateReports', { jobId: job.id });
   }
   clearLastScreen();
+  delete state.miscPartsByJob[job.id];
   showToast('Job completed.');
   renderHome();
 }
@@ -2437,13 +2645,22 @@ async function renderRequests() {
 async function renderRequestForm() {
    const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
-  const helperOptions = state.boot.users.map((user) => `<option value="${user.id}">${user.full_name}</option>`).join('');
+ const helperNames = [
+    state.tech?.full_name,
+    ...state.helpers,
+  ].filter(Boolean);
+  const helperOptions = [...new Set(helperNames)].map((name) => `<option value="${name}">${name}</option>`).join('');
   const truckTools = await listTruckTools(state.truckId);
   const toolOptions = truckTools.map((tool) => {
     const name = tool.tools?.name || tool.tool_name || tool.name || 'Tool';
     return `<option value="${name}">${name}</option>`;
   }).join('');
-  const requestTypeOptions = state.boot.requestTypes.map((type) => `<option value="${type.name}">${type.name}</option>`).join('');
+  const requestTypeOptions = [
+    'Time off',
+    'Purchase request',
+    'Tool request',
+    'Supply request',
+  ].map((type) => `<option value="${type}">${type}</option>`).join('');
   panel.innerHTML = `
     <div class="screenTitle">
       <button class="backBtn" id="request-form-back">←</button>
@@ -2457,29 +2674,45 @@ async function renderRequestForm() {
       <div id="req-timeoff" class="section">
         <label>Person</label>
         <select id="req-person">${helperOptions}</select>
-        <label>Date/Time</label>
-        <input id="req-date" type="datetime-local" />
+       <label>Start Date/Time</label>
+        <input id="req-start" type="datetime-local" />
+        <label>End Date/Time</label>
+        <input id="req-end" type="datetime-local" />
+        <label>Reason</label>
+        <textarea id="req-reason"></textarea>
       </div>
       <div id="req-tool" class="section">
         <label>Tool Request Type</label>
         <select id="tool-type">
-          <option value="new">New Tool</option>
           <option value="replacement">Replacement</option>
+          <option value="additional".Additional</option>
         </select>
-        <label>Replacement Tool</label>
-        <select id="req-tool-name">${toolOptions}</select>
-        <label>Reason / Description</label>
+        <div id="tool-replacement">
+          <label>Replacement Tool</label>
+          <select id="req-tool-name">${toolOptions}</select>
+        </div>
+        <div id="tool-additional">
+          <label>Tool Name</label>
+          <input id="req-tool-custom" type="text" placeholder="Tool name" />
+        </div>
+        <label>Quantity</label>
+        <input id="req-tool-qty" type="number" min="1" value="1" />
+        <label>Reason</label>
         <textarea id="req-tool-desc"></textarea>
       </div>
-      <div id="req-maintenance" class="section">
-        <label>Odometer</label>
-        <input id="req-odometer" type="number" />
-        <label>Description</label>
-        <textarea id="req-maintenance-desc"></textarea>
-      </div>
       <div id="req-purchase" class="section">
-        <label>Description</label>
+        <label>Purchase Description</label>
         <textarea id="req-purchase-desc"></textarea>
+        <label>Estimated Cost</label>
+        <input id="req-purchase-cost" type="number" min="0" step="0.01" />
+      </div>
+      <div id="req-supply" class="section">
+        <label>Supply Description</label>
+        <textarea id="req-supply-desc"></textarea>
+        <label>Quantity</label>
+        <input id="req-supply-qty" type="number" min="1" value="1" />
+        <label>Reason</label>
+        <textarea id="req-supply-reason"></textarea>
       </div>
       <div class="actions">
         <button class="action" id="save">Save</button>
@@ -2490,9 +2723,9 @@ async function renderRequestForm() {
   const reqTypeSelect = panel.querySelector('#req-type');
   const sections = {
     'Time off': panel.querySelector('#req-timeoff'),
-    Tool: panel.querySelector('#req-tool'),
-    'Truck maintenance': panel.querySelector('#req-maintenance'),
-    Purchase: panel.querySelector('#req-purchase'),
+    'Tool request': panel.querySelector('#req-tool'),
+    'Purchase request': panel.querySelector('#req-purchase'),
+    'Supply request': panel.querySelector('#req-supply'),
   };
   const updateSections = () => {
     Object.values(sections).forEach((section) => { section.style.display = 'none'; });
@@ -2501,36 +2734,68 @@ async function renderRequestForm() {
   };
   updateSections();
   reqTypeSelect.addEventListener('change', updateSections);
+   const toolTypeSelect = panel.querySelector('#tool-type');
+  const replacementSection = panel.querySelector('#tool-replacement');
+  const additionalSection = panel.querySelector('#tool-additional');
+  const toggleToolType = () => {
+    const isReplacement = toolTypeSelect.value === 'replacement';
+    replacementSection.style.display = isReplacement ? 'grid' : 'none';
+    additionalSection.style.display = isReplacement ? 'none' : 'grid';
+  };
+  toggleToolType();
+  toolTypeSelect.addEventListener('change', toggleToolType);
 
   panel.querySelector('#save').addEventListener('click', async () => {
     const type = panel.querySelector('#req-type').value;
     let desc = '';
     const metadata = {};
     if (type === 'Time off') {
-      metadata.person_id = panel.querySelector('#req-person').value;
-      metadata.date = panel.querySelector('#req-date').value;
-      desc = `Time off requested for ${metadata.date || 'unspecified date'}.`;
-    } else if (type === 'Tool') {
-      metadata.tool_type = panel.querySelector('#tool-type').value;
-      metadata.tool_name = panel.querySelector('#req-tool-name').value;
-      desc = panel.querySelector('#req-tool-desc').value.trim();
-      if (metadata.tool_type === 'replacement' && !metadata.tool_name) {
-        showToast('Select replacement tool.');
+      metadata.person = panel.querySelector('#req-person').value;
+      metadata.start = panel.querySelector('#req-start').value;
+      metadata.end = panel.querySelector('#req-end').value;
+      metadata.reason = panel.querySelector('#req-reason').value.trim();
+      desc = `Time off request for ${metadata.person || 'team member'} (${metadata.start || 'start TBD'} → ${metadata.end || 'end TBD'}).`;
+      if (!metadata.person || !metadata.start || !metadata.end || !metadata.reason) {
+        showToast('Complete all time off fields.');
         return;
       }
-    } else if (type === 'Truck maintenance') {
-      metadata.odometer = panel.querySelector('#req-odometer').value;
-      desc = panel.querySelector('#req-maintenance-desc').value.trim();
-      if (!metadata.odometer) {
-        showToast('Odometer required.');
+   } else if (type === 'Tool request') {
+      metadata.tool_request_type = panel.querySelector('#tool-type').value;
+      metadata.qty = panel.querySelector('#req-tool-qty').value;
+      metadata.reason = panel.querySelector('#req-tool-desc').value.trim();
+      if (!metadata.qty || !metadata.reason) {
+        showToast('Tool qty and reason required.');
         return;
       }
-    } else if (type === 'Purchase') {
+    if (metadata.tool_request_type === 'replacement') {
+        metadata.tool_name = panel.querySelector('#req-tool-name').value;
+        if (!metadata.tool_name) {
+          showToast('Select replacement tool.');
+          return;
+        }
+      } else {
+        metadata.tool_name = panel.querySelector('#req-tool-custom').value.trim();
+        if (!metadata.tool_name) {
+          showToast('Enter tool name.');
+          return;
+        }
+      }
+      desc = `${metadata.tool_request_type === 'replacement' ? 'Replacement' : 'Additional'} tool request: ${metadata.tool_name}`;
+    } else if (type === 'Purchase request') {
+      metadata.estimated_cost = panel.querySelector('#req-purchase-cost').value;
       desc = panel.querySelector('#req-purchase-desc').value.trim();
-    }
     if (!desc) {
-      showToast('Description required.');
-      return;
+        showToast('Purchase description required.');
+        return;
+      }
+    } else if (type === 'Supply request') {
+      metadata.qty = panel.querySelector('#req-supply-qty').value;
+      metadata.reason = panel.querySelector('#req-supply-reason').value.trim();
+      desc = panel.querySelector('#req-supply-desc').value.trim();
+      if (!desc || !metadata.qty || !metadata.reason) {
+        showToast('Supply description, qty, and reason required.');
+        return;
+      }
     }
     const payload = {
       truck_id: state.truckId,

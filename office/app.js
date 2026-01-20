@@ -52,6 +52,25 @@ import {
   cancelJob,
   updateJob,
   addAttachment,
+  listDiagnosticWorkflows,
+  createDiagnosticWorkflow,
+  updateDiagnosticWorkflow,
+  deleteDiagnosticWorkflow,
+  listDiagnosticWorkflowBrands,
+  createDiagnosticWorkflowBrand,
+  updateDiagnosticWorkflowBrand,
+  deleteDiagnosticWorkflowBrand,
+  listDiagnosticNodes,
+  createDiagnosticNode,
+  updateDiagnosticNode,
+  deleteDiagnosticNode,
+  listDiagnosticEdges,
+  createDiagnosticEdge,
+  updateDiagnosticEdge,
+  deleteDiagnosticEdge,
+  listDiagnosticNodeLayouts,
+  upsertDiagnosticNodeLayout,
+  uploadDiagnosticWorkflowAttachment,
   getSupabaseClient,
 } from '../shared/db.js';
 import { getConfig, saveConfig } from '../shared/config.js';
@@ -76,6 +95,11 @@ const state = {
   customerId: null,
   fieldId: null,
   truckId: null,
+  diagnosticsBuilder: {
+    workflowId: null,
+    brandId: null,
+    nodeId: null,
+  },
 };
 
 function showToast(message) {
@@ -3260,7 +3284,7 @@ async function renderFieldFilePremium() {
   left.className='detail-left';
   left.innerHTML = `
     <div class="detail-title">${field.name || 'Field'}</div>
-    <div class="detail-sub muted">${[field.address, field.brand, field.power_source].filter(Boolean).join(' • ')}</div>
+    <div class="detail-sub muted">${[field.brand, field.power_source].filter(Boolean).join(' • ')}</div>
   `;
 
   const actions = document.createElement('div');
@@ -3283,7 +3307,6 @@ async function renderFieldFilePremium() {
     { label: 'Power Source', keys: ['power_source'] },
     { label: 'Serial Number', keys: ['serial_number', 'serial'] },
     { label: 'Tower Count', keys: ['tower_count'] },
-    { label: 'Address', keys: ['address'] },
     { label: 'Lat', keys: ['lat', 'latitude'] },
     { label: 'Lon', keys: ['lon', 'Longitude'] },
     { label: 'Sprinkler Package #', keys: ['sprinkler_package', 'sprinkler_package_number', 'sprinkler_package_no'] },
@@ -4483,7 +4506,957 @@ const list = document.createElement('div');
   viewContainer.appendChild(container);
 
 }
+function buildDiagnosticDefaultNode(type) {
+  if (type === 'check') {
+    return {
+      what_to_check: '',
+      how_to_check: '',
+      attachments: [],
+      readings: [],
+      rollup_logic: 'all_good',
+      rollup_custom: '',
+      explanation_good: '',
+      explanation_bad: '',
+    };
+  }
+  if (type === 'repair') {
+    return {
+      repair_title: '',
+      why_repair: '',
+      attachments: [],
+      recommended_tools: [],
+      step_type: 'static',
+      steps: [],
+      sections: [],
+      photos: { before: false, after: false },
+    };
+  }
+  return {
+    closure_reason: '',
+    resolved: '',
+    follow_up: '',
+    notes_for_office: '',
+  };
+}
 
+function hashWorkflowPayload(payload) {
+  let hash = 0;
+  const input = JSON.stringify(payload);
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return `wf_${Math.abs(hash)}`;
+}
+
+async function renderDiagnosticsBuilder() {
+  viewTitle.textContent = 'Diagnostics Workflow Builder';
+  viewSubtitle.textContent = 'Create problem workflows, brand flows, and step-by-step diagnostics.';
+  viewActions.innerHTML = '';
+
+  const addWorkflowBtn = document.createElement('button');
+  addWorkflowBtn.className = 'action';
+  addWorkflowBtn.textContent = 'New Workflow';
+  viewActions.appendChild(addWorkflowBtn);
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'grid-two';
+
+  const listCard = document.createElement('div');
+  listCard.className = 'card diagnostics-card';
+  const builderCard = document.createElement('div');
+  builderCard.className = 'card diagnostics-card';
+
+  wrapper.append(listCard, builderCard);
+  viewContainer.innerHTML = '';
+  viewContainer.appendChild(wrapper);
+
+  const workflows = await listDiagnosticWorkflows();
+  if (!state.diagnosticsBuilder.workflowId && workflows.length) {
+    state.diagnosticsBuilder.workflowId = workflows[0].id;
+  }
+
+  const selectedWorkflow = workflows.find((wf) => wf.id === state.diagnosticsBuilder.workflowId) || workflows[0];
+
+  const brands = selectedWorkflow ? await listDiagnosticWorkflowBrands(selectedWorkflow.id) : [];
+  if (!state.diagnosticsBuilder.brandId && brands.length) {
+    state.diagnosticsBuilder.brandId = brands[0].id;
+  }
+  const selectedBrand = brands.find((brand) => brand.id === state.diagnosticsBuilder.brandId) || brands[0];
+
+  const nodes = selectedBrand ? await listDiagnosticNodes(selectedBrand.id) : [];
+  const edges = selectedBrand ? await listDiagnosticEdges(selectedBrand.id) : [];
+  const layouts = selectedBrand ? await listDiagnosticNodeLayouts(selectedBrand.id) : [];
+  const layoutMap = new Map(layouts.map((layout) => [layout.node_id, layout]));
+
+  const danglingNodes = new Set();
+  const endNodeIds = new Set(nodes.filter((node) => node.node_type === 'end').map((node) => node.id));
+  const edgesByFrom = new Map();
+  edges.forEach((edge) => {
+    const list = edgesByFrom.get(edge.from_node_id) || [];
+    list.push(edge);
+    edgesByFrom.set(edge.from_node_id, list);
+  });
+
+  const hasTerminalPath = (startId, visited = new Set()) => {
+    if (endNodeIds.has(startId)) return true;
+    if (visited.has(startId)) return false;
+    visited.add(startId);
+    const outgoing = edgesByFrom.get(startId) || [];
+    if (!outgoing.length) return false;
+    return outgoing.some((edge) => hasTerminalPath(edge.to_node_id, visited));
+  };
+
+  nodes.forEach((node) => {
+    if (node.node_type === 'check') {
+      const goodEdge = edges.find((edge) => edge.from_node_id === node.id && edge.condition === 'good');
+      const badEdge = edges.find((edge) => edge.from_node_id === node.id && edge.condition === 'bad');
+      if (!goodEdge || !badEdge) danglingNodes.add(node.id);
+    }
+    if (node.node_type === 'repair') {
+      const nextEdge = edges.find((edge) => edge.from_node_id === node.id && edge.condition === 'next');
+      if (!nextEdge) danglingNodes.add(node.id);
+    }
+    if (!hasTerminalPath(node.id)) danglingNodes.add(node.id);
+  });
+
+  const hasPostRepairVerification = edges.some((edge) => {
+    if (edge.condition !== 'next') return false;
+    const fromNode = nodes.find((node) => node.id === edge.from_node_id);
+    const toNode = nodes.find((node) => node.id === edge.to_node_id);
+    return fromNode?.node_type === 'repair' && toNode?.node_type === 'check';
+  });
+
+  const header = document.createElement('div');
+  header.className = 'section-stack';
+  header.innerHTML = `
+    <div class="section-title">Problems</div>
+    <div class="muted small">Add a problem, then add brand flows for each product line.</div>
+  `;
+
+  const workflowList = document.createElement('div');
+  workflowList.className = 'list';
+  workflows.forEach((workflow) => {
+    const row = document.createElement('button');
+    row.className = 'pill list-row';
+    if (workflow.id === selectedWorkflow?.id) row.classList.add('active');
+    row.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(workflow.title || 'Untitled Problem')}</div>
+        <div class="row-sub muted">Updated ${new Date(workflow.updated_at || workflow.created_at).toLocaleDateString()}</div>
+      </div>
+    `;
+    row.addEventListener('click', () => {
+      state.diagnosticsBuilder.workflowId = workflow.id;
+      state.diagnosticsBuilder.brandId = null;
+      state.diagnosticsBuilder.nodeId = null;
+      renderDiagnosticsBuilder();
+    });
+    workflowList.appendChild(row);
+  });
+
+  const workflowActions = document.createElement('div');
+  workflowActions.className = 'actions';
+  const editWorkflowBtn = document.createElement('button');
+  editWorkflowBtn.className = 'pill';
+  editWorkflowBtn.textContent = 'Edit Problem';
+  editWorkflowBtn.disabled = !selectedWorkflow;
+  const deleteWorkflowBtn = document.createElement('button');
+  deleteWorkflowBtn.className = 'pill danger';
+  deleteWorkflowBtn.textContent = 'Delete';
+  deleteWorkflowBtn.disabled = !selectedWorkflow;
+  workflowActions.append(editWorkflowBtn, deleteWorkflowBtn);
+
+  listCard.append(header, workflowList, workflowActions);
+
+  const brandSection = document.createElement('div');
+  brandSection.className = 'section-stack';
+  brandSection.innerHTML = `
+    <div class="section-title">Brands</div>
+    <div class="muted small">Create brand-specific flows under the same problem.</div>
+  `;
+
+  const brandList = document.createElement('div');
+  brandList.className = 'list';
+  brands.forEach((brand) => {
+    const row = document.createElement('button');
+    row.className = 'pill list-row';
+    if (brand.id === selectedBrand?.id) row.classList.add('active');
+    row.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(brand.brand_name || 'Brand')}</div>
+        <div class="row-sub muted">${brand.status === 'published' ? 'Published' : 'Draft'}</div>
+      </div>
+    `;
+    row.addEventListener('click', () => {
+      state.diagnosticsBuilder.brandId = brand.id;
+      state.diagnosticsBuilder.nodeId = null;
+      renderDiagnosticsBuilder();
+    });
+    brandList.appendChild(row);
+  });
+
+  const brandActions = document.createElement('div');
+  brandActions.className = 'actions';
+  const addBrandBtn = document.createElement('button');
+  addBrandBtn.className = 'pill';
+  addBrandBtn.textContent = 'Add Brand';
+  addBrandBtn.disabled = !selectedWorkflow;
+  const deleteBrandBtn = document.createElement('button');
+  deleteBrandBtn.className = 'pill danger';
+  deleteBrandBtn.textContent = 'Delete Brand';
+  deleteBrandBtn.disabled = !selectedBrand;
+  brandActions.append(addBrandBtn, deleteBrandBtn);
+
+  listCard.append(brandSection, brandList, brandActions);
+
+  addWorkflowBtn.addEventListener('click', () => {
+    const body = document.createElement('div');
+    body.className = 'section-stack';
+    body.innerHTML = `
+      <label>Problem Title</label>
+      <input id="workflow-title" placeholder="No power in the MCP" />
+      <div class="actions">
+        <button class="action" id="save-workflow">Create</button>
+      </div>
+    `;
+    const { close } = openModalSimple({ title: 'Create Workflow', bodyEl: body });
+    body.querySelector('#save-workflow').addEventListener('click', async () => {
+      const title = body.querySelector('#workflow-title').value.trim();
+      if (!title) {
+        showToast('Enter a problem title.');
+        return;
+      }
+      const workflow = await createDiagnosticWorkflow({ title });
+      state.diagnosticsBuilder.workflowId = workflow.id;
+      state.diagnosticsBuilder.brandId = null;
+      state.diagnosticsBuilder.nodeId = null;
+      close();
+      renderDiagnosticsBuilder();
+    });
+  });
+
+  editWorkflowBtn.addEventListener('click', () => {
+    if (!selectedWorkflow) return;
+    const body = document.createElement('div');
+    body.className = 'section-stack';
+    body.innerHTML = `
+      <label>Problem Title</label>
+      <input id="workflow-title" value="${escapeHtml(selectedWorkflow.title || '')}" />
+      <div class="actions">
+        <button class="action" id="save-workflow">Save</button>
+      </div>
+    `;
+    const { close } = openModalSimple({ title: 'Edit Workflow', bodyEl: body });
+    body.querySelector('#save-workflow').addEventListener('click', async () => {
+      const title = body.querySelector('#workflow-title').value.trim();
+      if (!title) {
+        showToast('Enter a problem title.');
+        return;
+      }
+      await updateDiagnosticWorkflow(selectedWorkflow.id, { title });
+      close();
+      renderDiagnosticsBuilder();
+    });
+  });
+
+  deleteWorkflowBtn.addEventListener('click', async () => {
+    if (!selectedWorkflow) return;
+    if (!confirm('Delete this workflow and all brand flows?')) return;
+    await deleteDiagnosticWorkflow(selectedWorkflow.id);
+    state.diagnosticsBuilder.workflowId = null;
+    state.diagnosticsBuilder.brandId = null;
+    state.diagnosticsBuilder.nodeId = null;
+    renderDiagnosticsBuilder();
+  });
+
+  addBrandBtn.addEventListener('click', () => {
+    if (!selectedWorkflow) return;
+    const body = document.createElement('div');
+    body.className = 'section-stack';
+    const existingOptions = brands.map((brand) => `<option value="${brand.id}">${escapeHtml(brand.brand_name || '')}</option>`).join('');
+    body.innerHTML = `
+      <label>Brand Name</label>
+      <input id="brand-name" placeholder="Reinke" />
+      <div class="section-title">Create Flow</div>
+      <label class="pill">
+        <input type="radio" name="flow-source" value="new" checked />
+        Build from scratch
+      </label>
+      <label class="pill">
+        <input type="radio" name="flow-source" value="copy" />
+        Copy existing brand flow
+      </label>
+      <div>
+        <label>Copy From</label>
+        <select id="brand-copy" ${brands.length ? '' : 'disabled'}>
+          ${existingOptions || '<option value="">No brands available</option>'}
+        </select>
+      </div>
+      <div class="actions">
+        <button class="action" id="save-brand">Create Brand Flow</button>
+      </div>
+    `;
+    const { close } = openModalSimple({ title: 'Add Brand Flow', bodyEl: body });
+    body.querySelector('#save-brand').addEventListener('click', async () => {
+      const brandName = body.querySelector('#brand-name').value.trim();
+      if (!brandName) {
+        showToast('Enter a brand name.');
+        return;
+      }
+      const sourceChoice = body.querySelector('input[name="flow-source"]:checked').value;
+      const brand = await createDiagnosticWorkflowBrand({
+        workflow_id: selectedWorkflow.id,
+        brand_name: brandName,
+        status: 'draft',
+        attachments: [],
+      });
+      if (sourceChoice === 'copy' && brands.length) {
+        const sourceId = body.querySelector('#brand-copy').value;
+        const sourceNodes = await listDiagnosticNodes(sourceId);
+        const sourceEdges = await listDiagnosticEdges(sourceId);
+        const sourceLayouts = await listDiagnosticNodeLayouts(sourceId);
+        const nodeMap = new Map();
+        for (const node of sourceNodes) {
+          const newNode = await createDiagnosticNode({
+            brand_id: brand.id,
+            node_type: node.node_type,
+            title: node.title,
+            data: node.data,
+          });
+          nodeMap.set(node.id, newNode.id);
+        }
+        for (const edge of sourceEdges) {
+          const fromId = nodeMap.get(edge.from_node_id);
+          const toId = nodeMap.get(edge.to_node_id);
+          if (!fromId || !toId) continue;
+          await createDiagnosticEdge({
+            brand_id: brand.id,
+            from_node_id: fromId,
+            to_node_id: toId,
+            condition: edge.condition,
+          });
+        }
+        for (const layout of sourceLayouts) {
+          const nodeId = nodeMap.get(layout.node_id);
+          if (!nodeId) continue;
+          await upsertDiagnosticNodeLayout({
+            brand_id: brand.id,
+            node_id: nodeId,
+            x: layout.x,
+            y: layout.y,
+          });
+        }
+      }
+      state.diagnosticsBuilder.brandId = brand.id;
+      state.diagnosticsBuilder.nodeId = null;
+      close();
+      renderDiagnosticsBuilder();
+    });
+  });
+
+  deleteBrandBtn.addEventListener('click', async () => {
+    if (!selectedBrand) return;
+    if (!confirm('Delete this brand flow and all nodes?')) return;
+    await deleteDiagnosticWorkflowBrand(selectedBrand.id);
+    state.diagnosticsBuilder.brandId = null;
+    state.diagnosticsBuilder.nodeId = null;
+    renderDiagnosticsBuilder();
+  });
+
+  if (!selectedWorkflow) {
+    builderCard.innerHTML = '<div class="muted">Create a workflow to begin building diagnostics.</div>';
+    return;
+  }
+
+  const builderHeader = document.createElement('div');
+  builderHeader.className = 'section-stack';
+  builderHeader.innerHTML = `
+    <div class="section-title">${escapeHtml(selectedWorkflow.title || 'Diagnostics Workflow')}</div>
+    <div class="muted small">Manage workflow-level attachments and brand flow graphs.</div>
+  `;
+  builderCard.appendChild(builderHeader);
+
+  if (!selectedBrand) {
+    builderCard.innerHTML += '<div class="muted">Select or create a brand to build its flow.</div>';
+    return;
+  }
+
+  const attachmentsSection = document.createElement('div');
+  attachmentsSection.className = 'section-stack';
+  attachmentsSection.innerHTML = `
+    <div class="section-title">Workflow Attachments</div>
+    <div class="muted small">Visible to techs before the first diagnostic step.</div>
+  `;
+  const attachmentsList = document.createElement('div');
+  attachmentsList.className = 'list';
+  const brandAttachments = selectedBrand.attachments || [];
+  if (!brandAttachments.length) attachmentsList.innerHTML = '<div class="muted">No attachments yet.</div>';
+  brandAttachments.forEach((fileUrl) => {
+    const item = document.createElement('div');
+    item.className = 'pill list-row';
+    item.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(fileUrl.split('/').pop())}</div>
+        <div class="row-sub muted">${escapeHtml(fileUrl)}</div>
+      </div>
+      <span class="badge danger">Remove</span>
+    `;
+    item.querySelector('.badge').addEventListener('click', async () => {
+      const next = brandAttachments.filter((url) => url !== fileUrl);
+      await updateDiagnosticWorkflowBrand(selectedBrand.id, { attachments: next });
+      renderDiagnosticsBuilder();
+    });
+    attachmentsList.appendChild(item);
+  });
+
+  const attachmentInput = document.createElement('input');
+  attachmentInput.type = 'file';
+  attachmentInput.accept = 'application/pdf,image/png,image/jpeg,image/webp';
+  attachmentInput.addEventListener('change', async () => {
+    const file = attachmentInput.files?.[0];
+    if (!file) return;
+    const fileUrl = await uploadDiagnosticWorkflowAttachment(file, { prefix: `workflow/${selectedWorkflow.id}/${selectedBrand.id}` });
+    const next = [...brandAttachments, fileUrl];
+    await updateDiagnosticWorkflowBrand(selectedBrand.id, { attachments: next });
+    renderDiagnosticsBuilder();
+  });
+
+  attachmentsSection.append(attachmentsList, attachmentInput);
+  builderCard.appendChild(attachmentsSection);
+
+  const flowGrid = document.createElement('div');
+  flowGrid.className = 'diagnostics-flow-grid';
+
+  const nodeList = document.createElement('div');
+  nodeList.className = 'section-stack';
+  nodeList.innerHTML = `
+    <div class="section-title">Nodes</div>
+    <div class="muted small">Click a node to edit its details.</div>
+  `;
+  const nodeListItems = document.createElement('div');
+  nodeListItems.className = 'list';
+  nodes.forEach((node) => {
+    const row = document.createElement('button');
+    row.className = 'pill list-row';
+    if (node.id === state.diagnosticsBuilder.nodeId) row.classList.add('active');
+    if (danglingNodes.has(node.id)) row.classList.add('danger');
+    row.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(node.title || `${node.node_type} node`)}</div>
+        <div class="row-sub muted">${node.node_type.toUpperCase()}</div>
+      </div>
+    `;
+    row.addEventListener('click', () => {
+      state.diagnosticsBuilder.nodeId = node.id;
+      renderDiagnosticsBuilder();
+    });
+    nodeListItems.appendChild(row);
+  });
+
+  const nodeActions = document.createElement('div');
+  nodeActions.className = 'actions';
+  ['check', 'repair', 'end'].forEach((type) => {
+    const btn = document.createElement('button');
+    btn.className = 'pill';
+    btn.textContent = `Add ${type === 'check' ? 'Check' : type === 'repair' ? 'Repair' : 'End'} Node`;
+    btn.addEventListener('click', async () => {
+      const title = type === 'check' ? 'New Check' : type === 'repair' ? 'New Repair' : 'End';
+      const newNode = await createDiagnosticNode({
+        brand_id: selectedBrand.id,
+        node_type: type,
+        title,
+        data: buildDiagnosticDefaultNode(type),
+      });
+      state.diagnosticsBuilder.nodeId = newNode.id;
+      renderDiagnosticsBuilder();
+    });
+    nodeActions.appendChild(btn);
+  });
+  nodeList.append(nodeListItems, nodeActions);
+  flowGrid.appendChild(nodeList);
+
+  const editor = document.createElement('div');
+  editor.className = 'section-stack';
+  editor.innerHTML = '<div class="section-title">Node Editor</div>';
+  const selectedNode = nodes.find((node) => node.id === state.diagnosticsBuilder.nodeId) || nodes[0];
+  if (selectedNode && !state.diagnosticsBuilder.nodeId) state.diagnosticsBuilder.nodeId = selectedNode.id;
+
+  if (!selectedNode) {
+    editor.innerHTML += '<div class="muted">Select a node to edit.</div>';
+  } else {
+    const nodeData = selectedNode.data || buildDiagnosticDefaultNode(selectedNode.node_type);
+    const form = document.createElement('div');
+    form.className = 'section-stack';
+    const nodeTitleInput = document.createElement('input');
+    nodeTitleInput.value = selectedNode.title || '';
+    nodeTitleInput.placeholder = 'Node title';
+
+    form.appendChild(labelWrap('Node Title', nodeTitleInput));
+
+    if (selectedNode.node_type === 'check') {
+      const whatInput = document.createElement('textarea');
+      whatInput.value = nodeData.what_to_check || '';
+      const howInput = document.createElement('textarea');
+      howInput.value = nodeData.how_to_check || '';
+      form.appendChild(labelWrap('What to Check', whatInput));
+      form.appendChild(labelWrap('How to Check', howInput));
+
+      const readingsWrap = document.createElement('div');
+      readingsWrap.className = 'section-stack';
+      readingsWrap.innerHTML = '<div class="section-title">Readings</div>';
+      const readingsList = document.createElement('div');
+      readingsList.className = 'list';
+      (nodeData.readings || []).forEach((reading, index) => {
+        const row = document.createElement('div');
+        row.className = 'pill list-row';
+        row.innerHTML = `
+          <div class="row-main">
+            <div class="row-title">${escapeHtml(reading.label || 'Reading')}</div>
+            <div class="row-sub muted">${escapeHtml(reading.operator || '')} ${escapeHtml(reading.value ?? '')} ${escapeHtml(reading.unit || '')}</div>
+          </div>
+          <div class="row-meta">
+            <span class="badge">Edit</span>
+            <span class="badge danger">Remove</span>
+          </div>
+        `;
+        const [editBtn, removeBtn] = row.querySelectorAll('.badge');
+        editBtn.addEventListener('click', () => {
+          openReadingModal(reading, async (updated) => {
+            const next = [...(nodeData.readings || [])];
+            next[index] = updated;
+            nodeData.readings = next;
+            await updateDiagnosticNode(selectedNode.id, { data: nodeData });
+            renderDiagnosticsBuilder();
+          });
+        });
+        removeBtn.addEventListener('click', async () => {
+          const next = [...(nodeData.readings || [])];
+          next.splice(index, 1);
+          nodeData.readings = next;
+          await updateDiagnosticNode(selectedNode.id, { data: nodeData });
+          renderDiagnosticsBuilder();
+        });
+        readingsList.appendChild(row);
+      });
+      const addReadingBtn = document.createElement('button');
+      addReadingBtn.className = 'pill';
+      addReadingBtn.textContent = 'Add Reading';
+      addReadingBtn.addEventListener('click', () => {
+        const reading = {
+          id: `r_${Date.now()}`,
+          label: '',
+          unit: '',
+          operator: '>=',
+          value: '',
+          min: '',
+          max: '',
+        };
+        openReadingModal(reading, async (updated) => {
+          nodeData.readings = [...(nodeData.readings || []), updated];
+          await updateDiagnosticNode(selectedNode.id, { data: nodeData });
+          renderDiagnosticsBuilder();
+        });
+      });
+      readingsWrap.append(readingsList, addReadingBtn);
+      form.appendChild(readingsWrap);
+
+      const rollupSelect = document.createElement('select');
+      ['all_good', 'any_bad', 'all_bad', 'any_good', 'custom'].forEach((option) => {
+        const opt = document.createElement('option');
+        opt.value = option;
+        opt.textContent = option.replace(/_/g, ' ');
+        if (nodeData.rollup_logic === option) opt.selected = true;
+        rollupSelect.appendChild(opt);
+      });
+      form.appendChild(labelWrap('Rollup Logic', rollupSelect));
+      const customLogic = document.createElement('input');
+      customLogic.value = nodeData.rollup_custom || '';
+      customLogic.placeholder = 'Custom logic (ex: r1 && (r2 || r3))';
+      form.appendChild(labelWrap('Custom Logic', customLogic));
+
+      const explanationGood = document.createElement('textarea');
+      explanationGood.value = nodeData.explanation_good || '';
+      const explanationBad = document.createElement('textarea');
+      explanationBad.value = nodeData.explanation_bad || '';
+      form.appendChild(labelWrap('Explanation if Good', explanationGood));
+      form.appendChild(labelWrap('Explanation if Bad', explanationBad));
+
+      const goodSelect = buildNodeSelect(nodes, selectedNode.id, edges, 'good');
+      const badSelect = buildNodeSelect(nodes, selectedNode.id, edges, 'bad');
+      form.appendChild(labelWrap('Next on Good', goodSelect));
+      form.appendChild(labelWrap('Next on Bad', badSelect));
+
+      goodSelect.addEventListener('change', () => updateEdgeSelection(selectedNode.id, goodSelect.value, 'good'));
+      badSelect.addEventListener('change', () => updateEdgeSelection(selectedNode.id, badSelect.value, 'bad'));
+
+      whatInput.addEventListener('input', () => { nodeData.what_to_check = whatInput.value; });
+      howInput.addEventListener('input', () => { nodeData.how_to_check = howInput.value; });
+      rollupSelect.addEventListener('change', () => { nodeData.rollup_logic = rollupSelect.value; });
+      customLogic.addEventListener('input', () => { nodeData.rollup_custom = customLogic.value; });
+      explanationGood.addEventListener('input', () => { nodeData.explanation_good = explanationGood.value; });
+      explanationBad.addEventListener('input', () => { nodeData.explanation_bad = explanationBad.value; });
+    }
+
+    if (selectedNode.node_type === 'repair') {
+      const titleInput = document.createElement('input');
+      titleInput.value = nodeData.repair_title || '';
+      const whyInput = document.createElement('textarea');
+      whyInput.value = nodeData.why_repair || '';
+      form.appendChild(labelWrap('Repair Title', titleInput));
+      form.appendChild(labelWrap('Why Repair Is Needed', whyInput));
+
+      const toolsInput = document.createElement('textarea');
+      toolsInput.value = (nodeData.recommended_tools || []).join('\n');
+      toolsInput.placeholder = 'One tool per line';
+      form.appendChild(labelWrap('Recommended Tools', toolsInput));
+
+      const stepTypeSelect = document.createElement('select');
+      ['static', 'guided', 'checkbox', 'sectioned'].forEach((option) => {
+        const opt = document.createElement('option');
+        opt.value = option;
+        opt.textContent = option.replace(/_/g, ' ');
+        if (nodeData.step_type === option) opt.selected = true;
+        stepTypeSelect.appendChild(opt);
+      });
+      form.appendChild(labelWrap('Step Type', stepTypeSelect));
+      const stepsInput = document.createElement('textarea');
+      stepsInput.value = (nodeData.steps || []).join('\n');
+      stepsInput.placeholder = 'One step per line';
+      form.appendChild(labelWrap('Steps', stepsInput));
+
+      const photosWrap = document.createElement('div');
+      photosWrap.className = 'form-grid';
+      const beforeToggle = document.createElement('input');
+      beforeToggle.type = 'checkbox';
+      beforeToggle.checked = nodeData.photos?.before || false;
+      const afterToggle = document.createElement('input');
+      afterToggle.type = 'checkbox';
+      afterToggle.checked = nodeData.photos?.after || false;
+      photosWrap.append(
+        checkboxWrap('Before Photo Required', beforeToggle),
+        checkboxWrap('After Photo Required', afterToggle),
+      );
+      form.appendChild(photosWrap);
+
+      const nextSelect = buildNodeSelect(nodes, selectedNode.id, edges, 'next');
+      form.appendChild(labelWrap('After Repair', nextSelect));
+      nextSelect.addEventListener('change', () => updateEdgeSelection(selectedNode.id, nextSelect.value, 'next'));
+
+      titleInput.addEventListener('input', () => { nodeData.repair_title = titleInput.value; });
+      whyInput.addEventListener('input', () => { nodeData.why_repair = whyInput.value; });
+      toolsInput.addEventListener('input', () => { nodeData.recommended_tools = toolsInput.value.split('\n').filter(Boolean); });
+      stepTypeSelect.addEventListener('change', () => { nodeData.step_type = stepTypeSelect.value; });
+      stepsInput.addEventListener('input', () => { nodeData.steps = stepsInput.value.split('\n').filter(Boolean); });
+      beforeToggle.addEventListener('change', () => {
+        nodeData.photos = { ...(nodeData.photos || {}), before: beforeToggle.checked };
+      });
+      afterToggle.addEventListener('change', () => {
+        nodeData.photos = { ...(nodeData.photos || {}), after: afterToggle.checked };
+      });
+    }
+
+    if (selectedNode.node_type === 'end') {
+      const closureReason = document.createElement('textarea');
+      closureReason.value = nodeData.closure_reason || '';
+      form.appendChild(labelWrap('Closure Reason', closureReason));
+      const resolvedSelect = document.createElement('select');
+      ['','yes','no'].forEach((option) => {
+        const opt = document.createElement('option');
+        opt.value = option;
+        opt.textContent = option || 'Not set';
+        if (nodeData.resolved === option) opt.selected = true;
+        resolvedSelect.appendChild(opt);
+      });
+      const followUpSelect = document.createElement('select');
+      ['','yes','no'].forEach((option) => {
+        const opt = document.createElement('option');
+        opt.value = option;
+        opt.textContent = option || 'Not set';
+        if (nodeData.follow_up === option) opt.selected = true;
+        followUpSelect.appendChild(opt);
+      });
+      const notes = document.createElement('textarea');
+      notes.value = nodeData.notes_for_office || '';
+      form.appendChild(labelWrap('Resolved?', resolvedSelect));
+      form.appendChild(labelWrap('Follow-up Required?', followUpSelect));
+      form.appendChild(labelWrap('Notes for Office', notes));
+
+      closureReason.addEventListener('input', () => { nodeData.closure_reason = closureReason.value; });
+      resolvedSelect.addEventListener('change', () => { nodeData.resolved = resolvedSelect.value; });
+      followUpSelect.addEventListener('change', () => { nodeData.follow_up = followUpSelect.value; });
+      notes.addEventListener('input', () => { nodeData.notes_for_office = notes.value; });
+    }
+
+    const attachmentsWrap = document.createElement('div');
+    attachmentsWrap.className = 'section-stack';
+    attachmentsWrap.innerHTML = '<div class="section-title">Node Attachments</div>';
+    const nodeAttachments = nodeData.attachments || [];
+    const nodeAttachList = document.createElement('div');
+    nodeAttachList.className = 'list';
+    if (!nodeAttachments.length) nodeAttachList.innerHTML = '<div class="muted">No attachments yet.</div>';
+    nodeAttachments.forEach((url, index) => {
+      const item = document.createElement('div');
+      item.className = 'pill list-row';
+      item.innerHTML = `
+        <div class="row-main">
+          <div class="row-title">${escapeHtml(url.split('/').pop())}</div>
+          <div class="row-sub muted">${escapeHtml(url)}</div>
+        </div>
+        <span class="badge danger">Remove</span>
+      `;
+      item.querySelector('.badge').addEventListener('click', async () => {
+        nodeData.attachments = nodeAttachments.filter((_, i) => i !== index);
+        await updateDiagnosticNode(selectedNode.id, { data: nodeData });
+        renderDiagnosticsBuilder();
+      });
+      nodeAttachList.appendChild(item);
+    });
+    const nodeAttachmentInput = document.createElement('input');
+    nodeAttachmentInput.type = 'file';
+    nodeAttachmentInput.accept = 'application/pdf,image/png,image/jpeg,image/webp';
+    nodeAttachmentInput.addEventListener('change', async () => {
+      const file = nodeAttachmentInput.files?.[0];
+      if (!file) return;
+      const fileUrl = await uploadDiagnosticWorkflowAttachment(file, { prefix: `node/${selectedWorkflow.id}/${selectedBrand.id}/${selectedNode.id}` });
+      nodeData.attachments = [...nodeAttachments, fileUrl];
+      await updateDiagnosticNode(selectedNode.id, { data: nodeData });
+      renderDiagnosticsBuilder();
+    });
+    attachmentsWrap.append(nodeAttachList, nodeAttachmentInput);
+    form.appendChild(attachmentsWrap);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'action';
+    saveBtn.textContent = 'Save Node';
+    saveBtn.addEventListener('click', async () => {
+      const payload = {
+        title: nodeTitleInput.value.trim() || selectedNode.title,
+        data: nodeData,
+      };
+      await updateDiagnosticNode(selectedNode.id, payload);
+      renderDiagnosticsBuilder();
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'pill danger';
+    deleteBtn.textContent = 'Delete Node';
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm('Delete this node?')) return;
+      await deleteDiagnosticNode(selectedNode.id);
+      state.diagnosticsBuilder.nodeId = null;
+      renderDiagnosticsBuilder();
+    });
+
+    const actionRow = document.createElement('div');
+    actionRow.className = 'actions';
+    actionRow.append(saveBtn, deleteBtn);
+    form.appendChild(actionRow);
+
+    form.querySelectorAll('textarea, input, select').forEach((input) => {
+      input.addEventListener('input', () => {
+        if (input === nodeTitleInput) return;
+      });
+    });
+
+    editor.appendChild(form);
+  }
+  flowGrid.appendChild(editor);
+
+  const diagram = document.createElement('div');
+  diagram.className = 'diagnostics-diagram';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('diagram-lines');
+  diagram.appendChild(svg);
+
+  const nodeElements = new Map();
+  nodes.forEach((node, index) => {
+    const layout = layoutMap.get(node.id) || { x: 40 + index * 40, y: 40 + index * 30 };
+    const nodeEl = document.createElement('div');
+    nodeEl.className = `diagram-node ${node.node_type}`;
+    if (danglingNodes.has(node.id)) nodeEl.classList.add('dangling');
+    nodeEl.style.left = `${layout.x}px`;
+    nodeEl.style.top = `${layout.y}px`;
+    nodeEl.textContent = node.title || node.node_type.toUpperCase();
+    nodeEl.addEventListener('click', () => {
+      state.diagnosticsBuilder.nodeId = node.id;
+      renderDiagnosticsBuilder();
+    });
+    nodeEl.addEventListener('pointerdown', (event) => {
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const rect = diagram.getBoundingClientRect();
+      const originX = layout.x;
+      const originY = layout.y;
+      function onMove(moveEvent) {
+        const nextX = originX + (moveEvent.clientX - startX);
+        const nextY = originY + (moveEvent.clientY - startY);
+        nodeEl.style.left = `${nextX}px`;
+        nodeEl.style.top = `${nextY}px`;
+      }
+      function onUp(upEvent) {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        const nextX = originX + (upEvent.clientX - startX);
+        const nextY = originY + (upEvent.clientY - startY);
+        upsertDiagnosticNodeLayout({
+          brand_id: selectedBrand.id,
+          node_id: node.id,
+          x: Math.max(0, nextX),
+          y: Math.max(0, nextY),
+        });
+        renderDiagnosticsBuilder();
+      }
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      nodeEl.setPointerCapture(event.pointerId);
+    });
+    diagram.appendChild(nodeEl);
+    nodeElements.set(node.id, { node, element: nodeEl });
+  });
+
+  edges.forEach((edge) => {
+    const fromEl = nodeElements.get(edge.from_node_id)?.element;
+    const toEl = nodeElements.get(edge.to_node_id)?.element;
+    if (!fromEl || !toEl) return;
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+    const wrapperRect = diagram.getBoundingClientRect();
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', String(fromRect.left - wrapperRect.left + fromRect.width / 2));
+    line.setAttribute('y1', String(fromRect.top - wrapperRect.top + fromRect.height / 2));
+    line.setAttribute('x2', String(toRect.left - wrapperRect.left + toRect.width / 2));
+    line.setAttribute('y2', String(toRect.top - wrapperRect.top + toRect.height / 2));
+    line.setAttribute('data-condition', edge.condition);
+    svg.appendChild(line);
+  });
+
+  const publishSection = document.createElement('div');
+  publishSection.className = 'section-stack';
+  publishSection.innerHTML = `
+    <div class="section-title">Publish</div>
+    <div class="muted small">Publishing locks validation for dangling branches. Edits remain possible.</div>
+  `;
+  if (!hasPostRepairVerification) {
+    const warning = document.createElement('div');
+    warning.className = 'pill warning';
+    warning.textContent = 'Warning: No post-repair verification check exists.';
+    publishSection.appendChild(warning);
+  }
+  const publishBtn = document.createElement('button');
+  publishBtn.className = 'action';
+  publishBtn.textContent = selectedBrand.status === 'published' ? 'Update Published Workflow' : 'Publish Workflow';
+  publishBtn.addEventListener('click', async () => {
+    if (danglingNodes.size) {
+      showToast('Fix dangling branches before publishing.');
+      return;
+    }
+    const payload = {
+      nodes,
+      edges,
+    };
+    const versionHash = hashWorkflowPayload(payload);
+    await updateDiagnosticWorkflowBrand(selectedBrand.id, {
+      status: 'published',
+      version_hash: versionHash,
+    });
+    showToast('Workflow published.');
+    renderDiagnosticsBuilder();
+  });
+  publishSection.appendChild(publishBtn);
+
+  builderCard.append(flowGrid, diagram, publishSection);
+
+  function openReadingModal(reading, onSave) {
+    const body = document.createElement('div');
+    body.className = 'section-stack';
+    body.innerHTML = `
+      <label>Label</label>
+      <input id="reading-label" value="${escapeHtml(reading.label || '')}" />
+      <label>Unit</label>
+      <input id="reading-unit" value="${escapeHtml(reading.unit || '')}" />
+      <label>Operator</label>
+      <select id="reading-operator">
+        <option value="<">&lt;</option>
+        <option value="<=">&lt;=</option>
+        <option value=">">&gt;</option>
+        <option value=">=">&gt;=</option>
+        <option value="between">between</option>
+      </select>
+      <label>Value / Min</label>
+      <input id="reading-value" value="${escapeHtml(reading.value ?? '')}" />
+      <label>Max (between only)</label>
+      <input id="reading-max" value="${escapeHtml(reading.max ?? '')}" />
+      <div class="actions">
+        <button class="action" id="save-reading">Save</button>
+      </div>
+    `;
+    const { close } = openModalSimple({ title: 'Reading', bodyEl: body });
+    const operatorSelect = body.querySelector('#reading-operator');
+    operatorSelect.value = reading.operator || '>=';
+    body.querySelector('#save-reading').addEventListener('click', () => {
+      const updated = {
+        ...reading,
+        label: body.querySelector('#reading-label').value.trim(),
+        unit: body.querySelector('#reading-unit').value.trim(),
+        operator: operatorSelect.value,
+        value: body.querySelector('#reading-value').value.trim(),
+        max: body.querySelector('#reading-max').value.trim(),
+      };
+      onSave(updated);
+      close();
+    });
+  }
+
+  function labelWrap(labelText, inputEl) {
+    const wrap = document.createElement('div');
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    wrap.append(label, inputEl);
+    return wrap;
+  }
+
+  function checkboxWrap(labelText, inputEl) {
+    const wrap = document.createElement('label');
+    wrap.className = 'pill';
+    wrap.append(inputEl, document.createTextNode(` ${labelText}`));
+    return wrap;
+  }
+
+  function buildNodeSelect(nodesList, currentId, edgeList, condition) {
+    const select = document.createElement('select');
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'Select next node';
+    select.appendChild(empty);
+    nodesList.filter((node) => node.id !== currentId).forEach((node) => {
+      const opt = document.createElement('option');
+      opt.value = node.id;
+      opt.textContent = node.title || node.node_type;
+      select.appendChild(opt);
+    });
+    const existing = edgeList.find((edge) => edge.from_node_id === currentId && edge.condition === condition);
+    if (existing) select.value = existing.to_node_id;
+    return select;
+  }
+
+  async function updateEdgeSelection(fromId, toId, condition) {
+    const existing = edges.find((edge) => edge.from_node_id === fromId && edge.condition === condition);
+    if (!toId) {
+      if (existing) await deleteDiagnosticEdge(existing.id);
+    } else if (existing) {
+      await updateDiagnosticEdge(existing.id, { to_node_id: toId });
+    } else {
+      await createDiagnosticEdge({
+        brand_id: selectedBrand.id,
+        from_node_id: fromId,
+        to_node_id: toId,
+        condition,
+      });
+    }
+    renderDiagnosticsBuilder();
+  }
+}
 const viewHandlers = {
   'job-board': renderJobBoard,
   customers: renderCustomersPremium,
@@ -4519,6 +5492,7 @@ const viewHandlers = {
   users: renderUsersView,
    'job-types': renderJobTypesView,
   products: renderPartsView,
+  'diagnostics-builder': renderDiagnosticsBuilder,
   tools: renderToolsView,
   requests: renderRequests,
   'out-of-stock': renderOutOfStock,

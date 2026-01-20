@@ -14,7 +14,12 @@ function getClient() {
   if (!resolvedSupabaseUrl || !resolvedSupabaseAnonKey) {
     throw new Error('Supabase configuration missing. Please set SUPABASE_URL and SUPABASE_ANON_KEY.');
   }
-  client = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey);
+  client = createClient(resolvedSupabaseUrl, resolvedSupabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  });
   return client;
 }
 
@@ -267,6 +272,10 @@ export async function listJobs(filter = {}) {
   if (filter.statuses) {
     query = query.in('status', filter.statuses);
   }
+  if (filter.fieldId) {
+    query = query.eq('field_id', filter.fieldId);
+  }
+
   if (filter.finishedAfter) {
     query = query.gte('finished_at', filter.finishedAfter);
   }
@@ -386,8 +395,18 @@ export async function getJobStatusDurations(jobId) {
   const events = await getJobEvents(jobId);
   const totals = {};
   events.forEach((event) => {
-    if (!event.duration_seconds) return;
-    totals[event.event_type] = (totals[event.event_type] || 0) + event.duration_seconds;
+    let duration = Number(event.duration_seconds);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      if (event.started_at) {
+        const startedAt = new Date(event.started_at).getTime();
+        const endedAt = event.ended_at ? new Date(event.ended_at).getTime() : Date.now();
+        if (Number.isFinite(startedAt) && Number.isFinite(endedAt) && endedAt >= startedAt) {
+          duration = Math.floor((endedAt - startedAt) / 1000);
+        }
+      }
+    }
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    totals[event.event_type] = (totals[event.event_type] || 0) + duration;
   });
   return totals;
 }
@@ -674,7 +693,7 @@ export async function getRestockList(truckId) {
         minQty,
       };
     })
-    .filter((entry) => entry && entry.neededQTY > 0)
+    .filter((entry) => entry && entry.neededQty > 0)
     .sort((a, b) => a.product.name.localeCompare(b.product.name));
 }
 

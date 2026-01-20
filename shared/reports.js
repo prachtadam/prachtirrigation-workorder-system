@@ -18,7 +18,9 @@ function addSection(doc, title, lines, y) {
     doc.text(line, 16, cursor);
     cursor += 5;
   });
-  return cursor + 4;
+   doc.setDrawColor(220);
+  doc.line(14, cursor + 1, 196, cursor + 1);
+  return cursor + 6;
 }
 
 function formatDuration(seconds) {
@@ -39,7 +41,7 @@ function buildReport(doc, job, diagnostics, repairs, parts, durations, typeLabel
   y = addSection(doc, 'Customer & Field', [
     `Customer: ${job.customers?.name || ''}`,
     `Field: ${job.fields?.name || ''}`,
-    `Location: ${job.fields?.address || ''}`,
+    `Brand: ${job.fields?.brand || ''}`,
   ], y);
 
   y = addSection(doc, 'Job Details', [
@@ -50,15 +52,15 @@ function buildReport(doc, job, diagnostics, repairs, parts, durations, typeLabel
     `Description: ${job.description || ''}`,
   ], y);
 
-  y = addSection(doc, 'Diagnostics', diagnostics.length
-    ? diagnostics.map((entry) => `${entry.component_checked}: ${entry.check_results}`)
-    : ['None recorded'], y);
-
-  y = addSection(doc, 'Problem & Repair', [
+  y = addSection(doc, 'Problem & Repair Summary', [
     `Problem: ${job.problem_description || 'N/A'}`,
     `Repair: ${job.repair_description || repairs[repairs.length - 1]?.description || 'N/A'}`,
   ], y);
 
+  y = addSection(doc, 'Diagnostics', diagnostics.length
+    ? diagnostics.map((entry) => `${entry.component_checked}: ${entry.check_results}`)
+    : ['None recorded'], y);
+    
   y = addSection(doc, 'Parts Used', parts.length
     ? parts.map((part) => `${part.products?.name || 'Part'} (x${part.qty})`)
     : ['None'], y);
