@@ -27,13 +27,24 @@ import {
   createRequest,
   createReceipt,
   updateUser,
+   addAttachment,
+  listDiagnosticWorkflows,
+  listDiagnosticWorkflowBrands,
+  listDiagnosticNodes,
+  listDiagnosticEdges,
+  listDiagnosticNodeLayouts,
+  createDiagnosticWorkflowRun,
+  updateDiagnosticWorkflowRun,
+  createDiagnosticRunEvent,
+  listDiagnosticWorkflowRuns,
+  uploadJobPhoto,
   signIn,
   signOut,
   getSession,
 } from '../shared/db.js';
 import { enqueueAction, processOutbox, saveLastScreen, getLastScreen, clearLastScreen } from '../shared/offline.js';
 import { JOB_STATUSES } from '../shared/types.js';
-import { generateAndUploadReports } from '../shared/reports.js';
+import { generateAndUploadDiagnosticsReport, generateAndUploadReports } from '../shared/reports.js';
 
 const app = document.getElementById('app');
 const toast = document.getElementById('toast');
@@ -45,6 +56,16 @@ const state = {
   helpers: JSON.parse(localStorage.getItem('TECH_HELPERS') || '[]'),
   currentJob: null,
   offlineQueueHandlers: {},
+  diagnosticsRun: {
+    run: null,
+    workflow: null,
+    brand: null,
+    nodes: [],
+    edges: [],
+    currentNodeId: null,
+    stepStartedAt: null,
+    repairStartedAt: null,
+  },
 };
 const mapState = {
   map: null,
@@ -103,6 +124,55 @@ function formatElapsed(seconds) {
   const remainder = minutes % 60;
   if (hours) return `${hours}h ${remainder}m`;
   return `${remainder}m`;
+}
+
+function hashWorkflowPayload(payload) {
+  let hash = 0;
+  const input = JSON.stringify(payload);
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return `wf_${Math.abs(hash)}`;
+}
+
+function evaluateReading(reading, value) {
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) return null;
+  const operator = reading.operator || '>=';
+  if (operator === 'between') {
+    const min = Number(reading.value);
+    const max = Number(reading.max);
+    if (Number.isNaN(min) || Number.isNaN(max)) return null;
+    return numericValue >= min && numericValue <= max;
+  }
+  const threshold = Number(reading.value);
+  if (Number.isNaN(threshold)) return null;
+  if (operator === '<') return numericValue < threshold;
+  if (operator === '<=') return numericValue <= threshold;
+  if (operator === '>') return numericValue > threshold;
+  if (operator === '>=') return numericValue >= threshold;
+  return null;
+}
+
+function evaluateRollup(readings, results, rollupLogic, customLogic) {
+  if (!readings.length) return null;
+  const values = readings.map((reading) => results[reading.id]).filter((val) => val !== null);
+  if (!values.length) return null;
+  if (rollupLogic === 'all_good') return values.every(Boolean);
+  if (rollupLogic === 'any_bad') return values.some((val) => !val) ? false : true;
+  if (rollupLogic === 'all_bad') return values.every((val) => !val) ? false : true;
+  if (rollupLogic === 'any_good') return values.some(Boolean) ? true : false;
+  if (rollupLogic === 'custom' && customLogic) {
+    try {
+      const fn = new Function('results', `return ${customLogic};`);
+      return Boolean(fn(results));
+    } catch (error) {
+      console.warn('Custom logic error', error);
+      return null;
+    }
+  }
+  return null;
 }
 
 function updateInShopButton() {
@@ -221,6 +291,15 @@ async function executeOrQueue(action, payload, handler) {
     return null;
   }
   return handler(payload);
+}
+
+async function logDiagnosticsEvent(runId, nodeId, eventType, payload = {}) {
+  return executeOrQueue('diagnosticEvent', {
+    run_id: runId,
+    node_id: nodeId,
+    event_type: eventType,
+    payload,
+  }, createDiagnosticRunEvent);
 }
 
 async function syncOutbox() {
@@ -1336,7 +1415,7 @@ function renderJobIntake(job) {
       <input id="field-hours" value="${job.fields?.last_known_hours || ''}" />
       <div class="actions">
         <button class="action" id="start-diagnostics">Start Diagnostics</button>
-        <button class="action secondary" id="skip-repair">Skip to Repair</button>
+       
       </div>
     </div>
   `;
@@ -1351,130 +1430,633 @@ function renderJobIntake(job) {
   };
   panel.querySelector('#start-diagnostics').addEventListener('click', async () => {
     await updateFieldInfo();
-    renderDiagnostics(job);
-  });
-  panel.querySelector('#skip-repair').addEventListener('click', async () => {
-    await updateFieldInfo();
-    await executeOrQueue('setJobStatus', { jobId: job.id, status: JOB_STATUSES.ON_SITE_REPAIR }, ({ jobId, status }) =>
-      setJobStatus(jobId, status)
-    );
-    renderRepair(job);
+    renderWorkFlowStart(job);
   });
   screenContainer(container);
 }
 
-async function renderDiagnostics(job) {
+async function renderWorkFlowStart(job) {
   saveLastScreen('diagnostics', job.id);
-  const diagnostics = await listJobDiagnostics(job.id);
    const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
-  const card = document.createElement('div');
-  card.className = 'card';
   panel.innerHTML = `
     <div class="screenTitle">
-      <button class="backBtn" id="diagnostics-back">←</button>
-      <h2>Diagnostics</h2>
+       <button class="backBtn" id="workflow-back">←</button>
+      <h2>Diagnostics Workflow</h2>
       <span class="badge">${getTruckLabel()}</span>
     </div>
   `;
+ const card = document.createElement('div');
+  card.className = 'card';
   card.innerHTML = `
-    <h3>Diagnostics</h3>
+    <h3>Select Workflow</h3>
     <div class="card">
       <strong>${job.customers?.name}</strong>
       <div class="muted">${job.fields?.name}</div>
       <div>${job.job_types?.name}</div>
     </div>
-    <label>Component Checked</label>
-    <input id="component" />
-    <label>Check Results</label>
-    <textarea id="results"></textarea>
-    <button class="action" id="save">Save Entry</button>
-    <div class="list" id="diag-list"></div>
+    <label>Problem Title</label>
+    <select id="workflow-select"></select>
+    <label>Brand</label>
+    <select id="brand-select"></select>
+    <div id="workflow-attachments" class="list"></div>
     <div class="actions">
-      <button class="action" id="found-problem">Found Problem</button>
+        <button class="action" id="start-workflow">Start Workflow</button>
       <button class="action secondary" id="pause">Pause Job</button>
-      <button class="action secondary" id="back">Back</button>
     </div>
   `;
-  const list = card.querySelector('#diag-list');
-  diagnostics.forEach((entry) => {
-    const pill = document.createElement('button');
-    pill.className = 'pill';
-    pill.innerHTML = `
-      <div>${entry.component_checked}: ${entry.check_results}</div>
-      <span class="badge">Remove</span>
-    `;
-    pill.addEventListener('click', async () => {
-      await executeOrQueue('deleteDiagnostic', { id: entry.id }, ({ id }) => deleteJobDiagnostic(id));
-      renderDiagnostics(job);
-    });
-    list.appendChild(pill);
-  });
 
-  card.querySelector('#save').addEventListener('click', async () => {
-    const payload = {
-      job_id: job.id,
-      component_checked: card.querySelector('#component').value,
-      check_results: card.querySelector('#results').value,
-    };
-    if (!payload.component_checked || !payload.check_results) {
-      showToast('Enter component and results.');
+  const runs = await listDiagnosticWorkflowRuns(job.id);
+  const activeRun = runs.find((run) => run.status === 'in_progress');
+  if (activeRun) {
+    const resumeCard = document.createElement('div');
+    resumeCard.className = 'card';
+    resumeCard.innerHTML = `
+      <h4>Resume In-Progress Workflow</h4>
+      <div class="muted">${activeRun.workflow_title || 'Workflow'} · ${activeRun.brand_name || 'Brand'}</div>
+      <button class="action" id="resume-run">Resume</button>
+    `;
+     resumeCard.querySelector('#resume-run').addEventListener('click', async () => {
+      await resumeWorkflowRun(job, activeRun);
+    });
+  }
+  panel.appendChild(resumeCard);
+
+  const workflows = await listDiagnosticWorkflows();
+  const workflowSelect = card.querySelector('#workflow-select');
+  const brandSelect = card.querySelector('#brand-select');
+  const attachmentsList = card.querySelector('#workflow-attachments');
+
+  if (!workflows.length) {
+    workflowSelect.innerHTML = '<option value="">No workflows published</option>';
+    brandSelect.innerHTML = '<option value="">No brands</option>';
+    card.querySelector('#start-workflow').disabled = true;
+  } else {
+    workflows.forEach((workflow) => {
+      const opt = document.createElement('option');
+      opt.value = workflow.id;
+      opt.textContent = workflow.title || 'Workflow';
+      workflowSelect.appendChild(opt);
+    });
+  }
+
+  const loadBrands = async () => {
+    brandSelect.innerHTML = '';
+    attachmentsList.innerHTML = '';
+    const workflowId = workflowSelect.value;
+    if (!workflowId) return;
+    const brands = (await listDiagnosticWorkflowBrands(workflowId)).filter((brand) => brand.status === 'published');
+    const startBtn = card.querySelector('#start-workflow');
+    if (!brands.length) {
+      brandSelect.innerHTML = '<option value="">No brands available</option>';
+      attachmentsList.innerHTML = '<div class="muted">No workflow attachments.</div>';
+      if (startBtn) startBtn.disabled = true;
       return;
     }
-    await executeOrQueue('addDiagnostic', payload, addJobDiagnostic);
-    renderDiagnostics(job);
+    brands.forEach((brand) => {
+      const opt = document.createElement('option');
+      opt.value = brand.id;
+      opt.textContent = brand.brand_name || 'Brand';
+      brandSelect.appendChild(opt);
+    });
+    const selectedBrand = brands.find((brand) => brand.id === brandSelect.value) || brands[0];
+    if (startBtn) startBtn.disabled = false;
+    if (selectedBrand?.attachments?.length) {
+      selectedBrand.attachments.forEach((url) => {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        link.className = 'pill';
+        link.textContent = url.split('/').pop();
+        attachmentsList.appendChild(link);
+      });
+    } else {
+      attachmentsList.innerHTML = '<div class="muted">No workflow attachments.</div>';
+    }
+  };
+
+  workflowSelect.addEventListener('change', loadBrands);
+  brandSelect.addEventListener('change', loadBrands);
+
+  await loadBrands();
+
+  card.querySelector('#start-workflow').addEventListener('click', async () => {
+    const workflowId = workflowSelect.value;
+    const brandId = brandSelect.value;
+    if (!workflowId || !brandId) {
+      showToast('Select a workflow and brand.');
+      return;
+    }
+    await startWorkflowRun(job, workflowId, brandId);
   });
-  card.querySelector('#found-problem').addEventListener('click', () => renderFoundProblem(job));
   card.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_DIAGNOSTICS));
-  card.querySelector('#back').addEventListener('click', renderJobIntake.bind(null, job));
- panel.querySelector('#diagnostics-back').addEventListener('click', renderJobIntake.bind(null, job));
   panel.appendChild(card);
+   panel.querySelector('#workflow-back').addEventListener('click', renderJobIntake.bind(null, job));
   screenContainer(container);
 }
 
-function renderFoundProblem(job) {
-  saveLastScreen('found-problem', job.id);
-   const { container, panel } = createAppLayout();
-  panel.classList.add('panel-stack');
-  panel.innerHTML = `
-    <div class="screenTitle">
-      <button class="backBtn" id="found-problem-back">←</button>
-      <h2>Found Problem</h2>
-      <span class="badge">${getTruckLabel()}</span
-    <div class="card">
-      <h3>Found Problem</h3>
-      <div class="card">
-        <strong>${job.customers?.name}</strong>
-        <div class="muted">${job.fields?.name}</div>
-        <div>${job.job_types?.name}</div>
-      </div>
-      <label>Description</label>
-      <textarea id="problem"></textarea>
-      <div class="actions">
-        <button class="action" id="continue" disabled>Continue to Repair</button>
-        <button class="action secondary" id="pause">Pause Job</button>
-        <button class="action secondary" id="back">Back</button>
-      </div>
-    </div>
-  `;
- const input = panel.querySelector('#problem');
-  const continueBtn = panel.querySelector('#continue');
-  input.addEventListener('input', () => {
-    continueBtn.disabled = !input.value.trim();
+async function startWorkflowRun(job, workflowId, brandId) {
+  if (isOffline()) {
+    showToast('Go online to start a workflow.');
+    return;
+  }
+  const workflows = await listDiagnosticWorkflows();
+  const workflow = workflows.find((item) => item.id === workflowId);
+  const brands = await listDiagnosticWorkflowBrands(workflowId);
+  const brand = brands.find((item) => item.id === brandId);
+  const [nodes, edges] = await Promise.all([
+    listDiagnosticNodes(brandId),
+    listDiagnosticEdges(brandId),
+  ]);
+  if (!nodes.length) {
+    showToast('This brand flow has no nodes yet.');
+    return;
+  }
+  const previousRuns = await listDiagnosticWorkflowRuns(job.id);
+  const lastRun = previousRuns[previousRuns.length - 1];
+  const workflowVersionHash = hashWorkflowPayload({ nodes, edges });
+  const runPayload = {
+    job_id: job.id,
+    workflow_id: workflowId,
+    brand_id: brandId,
+    workflow_title: workflow?.title || '',
+    brand_name: brand?.brand_name || '',
+    workflow_version_hash: workflowVersionHash,
+    status: 'in_progress',
+    current_node_id: nodes[0].id,
+  };
+  const run = await executeOrQueue('createWorkflowRun', runPayload, createDiagnosticWorkflowRun);
+  if (!run) return;
+  await logDiagnosticsEvent(run.id, nodes[0].id, 'workflow_started', {
+    workflow_title: runPayload.workflow_title,
+    brand_name: runPayload.brand_name,
+    previous_run_id: lastRun?.id || null,
   });
-  continueBtn.addEventListener('click', async () => {
-    await executeOrQueue('updateJob', { jobId: job.id, payload: { problem_description: input.value.trim() } }, ({ jobId, payload }) =>
-      updateJob(jobId, payload)
-    );
+  state.diagnosticsRun = {
+    run,
+    workflow,
+    brand,
+    nodes,
+    edges,
+    currentNodeId: nodes[0].id,
+    stepStartedAt: Date.now(),
+    repairStartedAt: null,
+  };
+  renderWorkflowNode(job);
+}
+
+async function resumeWorkflowRun(job, run) {
+  const [nodes, edges] = await Promise.all([
+    listDiagnosticNodes(run.brand_id),
+    listDiagnosticEdges(run.brand_id),
+  ]);
+  state.diagnosticsRun = {
+    run,
+    workflow: { id: run.workflow_id, title: run.workflow_title },
+    brand: { id: run.brand_id, brand_name: run.brand_name, attachments: run.attachments || [] },
+    nodes,
+    edges,
+    currentNodeId: run.current_node_id || nodes[0]?.id,
+    stepStartedAt: Date.now(),
+    repairStartedAt: null,
+  };
+  renderWorkflowNode(job);
+}
+
+async function renderWorkflowNode(job) {
+  saveLastScreen('diagnostics', job.id);
+  const { run, nodes, edges, currentNodeId } = state.diagnosticsRun;
+  const node = nodes.find((item) => item.id === currentNodeId);
+  if (!node) {
+    renderWorkflowStart(job);
+    return;
+  }
+  if (node.node_type === 'repair') {
     await executeOrQueue('setJobStatus', { jobId: job.id, status: JOB_STATUSES.ON_SITE_REPAIR }, ({ jobId, status }) =>
       setJobStatus(jobId, status)
     );
-    renderRepair(job);
-  });
- panel.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_DIAGNOSTICS));
-  panel.querySelector('#back').addEventListener('click', () => renderDiagnostics(job));
-  panel.querySelector('#found-problem-back').addEventListener('click', () => renderDiagnostics(job));
+  } else {
+    await executeOrQueue('setJobStatus', { jobId: job.id, status: JOB_STATUSES.ON_SITE_DIAGNOSTICS }, ({ jobId, status }) =>
+      setJobStatus(jobId, status)
+    );
+  }
+
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  panel.innerHTML = `
+    <div class="screenTitle">
+     <button class="backBtn" id="workflow-node-back">←</button>
+      <h2>${node.node_type === 'repair' ? 'Repair' : node.node_type === 'end' ? 'Workflow End' : 'Diagnostics Check'}</h2>
+      <span class="badge">${getTruckLabel()}</span>
+  `;
+ 
+
+  if (node.node_type === 'check') {
+    state.diagnosticsRun.stepStartedAt = Date.now();
+    logDiagnosticsEvent(run.id, node.id, 'step_started', {});
+    renderCheckNode(job, node, panel);
+  } else if (node.node_type === 'repair') {
+    await renderRepairNode(job, node, panel);
+  } else {
+    renderEndNode(job, node, panel);
+  }
+
+  panel.querySelector('#workflow-node-back').addEventListener('click', renderWorkflowStart.bind(null, job));
   screenContainer(container);
+}
+
+async function renderCheckNode(job, node, panel) {
+  const data = node.data || {};
+  const readings = data.readings || [];
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h3>${node.title || 'Diagnostic Check'}</h3>
+    <div class="muted">${data.what_to_check || 'No description provided.'}</div>
+    <div>${data.how_to_check || ''}</div>
+  `;
+
+  if (data.attachments?.length) {
+    const attachments = document.createElement('div');
+    attachments.className = 'list';
+    data.attachments.forEach((url) => {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.className = 'pill';
+      link.textContent = url.split('/').pop();
+      attachments.appendChild(link);
+    });
+    card.appendChild(attachments);
+  }
+
+  const readingInputs = {};
+  readings.forEach((reading) => {
+    const label = document.createElement('label');
+    label.textContent = `${reading.label || 'Reading'} (${reading.unit || ''})`;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.dataset.readingId = reading.id;
+    card.append(label, input);
+    readingInputs[reading.id] = input;
+  });
+  
+  const resultBlock = document.createElement('div');
+  resultBlock.className = 'pill';
+  resultBlock.textContent = 'Awaiting readings.';
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const goodBtn = document.createElement('button');
+  goodBtn.className = 'action success';
+  goodBtn.textContent = 'Mark Good';
+  const badBtn = document.createElement('button');
+  badBtn.className = 'action danger';
+  badBtn.textContent = 'Mark Bad';
+  const evaluateBtn = document.createElement('button');
+  evaluateBtn.className = 'action';
+  evaluateBtn.textContent = 'Evaluate';
+  if (readings.length) {
+    actions.append(evaluateBtn);
+  } else {
+    actions.append(goodBtn, badBtn);
+  }
+
+  card.append(resultBlock, actions);
+  panel.appendChild(card);
+
+  let lastReadingResults = {};
+
+  const handleResult = async (isGood) => {
+    resultBlock.textContent = isGood ? 'Result: Good' : 'Result: Bad';
+    resultBlock.className = `pill ${isGood ? 'success' : 'danger'}`;
+    const explanation = document.createElement('div');
+    explanation.className = 'muted';
+    explanation.textContent = isGood ? data.explanation_good || '' : data.explanation_bad || '';
+    if (explanation.textContent) {
+      if (!resultBlock.querySelector('.muted')) resultBlock.appendChild(explanation);
+    }
+    const duration = state.diagnosticsRun.stepStartedAt ? Math.floor((Date.now() - state.diagnosticsRun.stepStartedAt) / 1000) : 0;
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'step_completed', {
+      result: isGood ? 'good' : 'bad',
+      readings: lastReadingResults,
+      duration_seconds: duration,
+    });
+    const nextNodeId = state.diagnosticsRun.edges.find((edge) => edge.from_node_id === node.id && edge.condition === (isGood ? 'good' : 'bad'))?.to_node_id;
+    if (nextNodeId) {
+      state.diagnosticsRun.currentNodeId = nextNodeId;
+      await executeOrQueue('updateWorkflowRun', { id: state.diagnosticsRun.run.id, payload: { current_node_id: nextNodeId } }, ({ id, payload }) =>
+        updateDiagnosticWorkflowRun(id, payload)
+      );
+      state.diagnosticsRun.stepStartedAt = Date.now();
+      renderWorkflowNode(job);
+    } else {
+      const restartBtn = document.createElement('button');
+      restartBtn.className = 'action';
+      restartBtn.textContent = 'Start Another Workflow';
+      restartBtn.addEventListener('click', () => renderWorkflowStart(job));
+      actions.innerHTML = '';
+      actions.appendChild(restartBtn);
+    }
+  };
+
+  evaluateBtn.addEventListener('click', () => {
+    const results = {};
+    readings.forEach((reading) => {
+      const input = readingInputs[reading.id];
+      results[reading.id] = evaluateReading(reading, input.value);
+    });
+    lastReadingResults = results;
+    const rollup = evaluateRollup(readings, results, data.rollup_logic, data.rollup_custom);
+    if (rollup === null) {
+      showToast('Enter valid readings to evaluate.');
+      return;
+    }
+    logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'readings_recorded', { results });
+    handleResult(rollup);
+  });
+ 
+   goodBtn.addEventListener('click', () => handleResult(true));
+  badBtn.addEventListener('click', () => handleResult(false));
+}
+
+async function renderRepairNode(job, node, panel) {
+  const data = node.data || {};
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h3>${data.repair_title || node.title || 'Repair'}</h3>
+    <div class="muted">${data.why_repair || ''}</div>
+  `;
+
+  if (data.attachments?.length) {
+    const attachments = document.createElement('div');
+    attachments.className = 'list';
+    data.attachments.forEach((url) => {
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.className = 'pill';
+      link.textContent = url.split('/').pop();
+      attachments.appendChild(link);
+    });
+    card.appendChild(attachments);
+  }
+
+  if (data.recommended_tools?.length) {
+    const toolsWrap = document.createElement('div');
+    toolsWrap.innerHTML = '<h4>Recommended Tools</h4>';
+    data.recommended_tools.forEach((tool) => {
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" /> ${tool}`;
+      toolsWrap.appendChild(label);
+    });
+    card.appendChild(toolsWrap);
+  }
+
+  const stepsWrap = document.createElement('div');
+  stepsWrap.innerHTML = '<h4>Repair Steps</h4>';
+  const steps = data.steps || [];
+  if (data.step_type === 'guided' && steps.length) {
+    let stepIndex = 0;
+    const stepText = document.createElement('div');
+    stepText.textContent = `Step ${stepIndex + 1}: ${steps[stepIndex]}`;
+    const controls = document.createElement('div');
+    controls.className = 'actions';
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'pill';
+    prevBtn.textContent = 'Back';
+    prevBtn.disabled = true;
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'pill';
+    nextBtn.textContent = 'Next';
+    controls.append(prevBtn, nextBtn);
+    const updateStep = () => {
+      stepText.textContent = `Step ${stepIndex + 1}: ${steps[stepIndex]}`;
+      prevBtn.disabled = stepIndex === 0;
+      nextBtn.disabled = stepIndex === steps.length - 1;
+    };
+    prevBtn.addEventListener('click', () => {
+      stepIndex = Math.max(0, stepIndex - 1);
+      updateStep();
+    });
+    nextBtn.addEventListener('click', () => {
+      stepIndex = Math.min(steps.length - 1, stepIndex + 1);
+      updateStep();
+    });
+    stepsWrap.append(stepText, controls);
+  } else if (data.step_type === 'checkbox') {
+    steps.forEach((step) => {
+      const label = document.createElement('label');
+      label.innerHTML = `<input type="checkbox" /> ${step}`;
+      stepsWrap.appendChild(label);
+    });
+  } else if (data.step_type === 'sectioned' && data.sections?.length) {
+    data.sections.forEach((section) => {
+      const sectionTitle = document.createElement('div');
+      sectionTitle.className = 'muted';
+      sectionTitle.textContent = section.title || 'Section';
+      stepsWrap.appendChild(sectionTitle);
+      const list = document.createElement('ol');
+      (section.steps || []).forEach((step) => {
+        const item = document.createElement('li');
+        item.textContent = step;
+        list.appendChild(item);
+      });
+      stepsWrap.appendChild(list);
+    });
+  } else {
+    const list = document.createElement('ol');
+    steps.forEach((step) => {
+      const item = document.createElement('li');
+      item.textContent = step;
+      list.appendChild(item);
+    });
+    stepsWrap.appendChild(list);
+  }
+  card.appendChild(stepsWrap);
+
+  const photoSection = document.createElement('div');
+  photoSection.innerHTML = '<h4>Photos</h4>';
+  const beforeInput = document.createElement('input');
+  beforeInput.type = 'file';
+  const duringInput = document.createElement('input');
+  duringInput.type = 'file';
+  const afterInput = document.createElement('input');
+  afterInput.type = 'file';
+  photoSection.append(
+    labelWrap('Before Repair', beforeInput),
+    labelWrap('During Repair', duringInput),
+    labelWrap('After Repair', afterInput),
+  );
+
+  const handlePhotoUpload = async (stage, input) => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const url = await uploadJobPhoto(file, { prefix: `job/${job.id}/diagnostics` });
+    await addAttachment({ job_id: job.id, attachment_type: `diagnostic_photo_${stage}`, file_url: url });
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'photo_added', { stage, url });
+    showToast('Photo saved.');
+  };
+
+  beforeInput.addEventListener('change', () => handlePhotoUpload('before', beforeInput));
+  duringInput.addEventListener('change', () => handlePhotoUpload('during', duringInput));
+  afterInput.addEventListener('change', () => handlePhotoUpload('after', afterInput));
+
+  card.appendChild(photoSection);
+
+  const partsSection = document.createElement('div');
+  partsSection.innerHTML = '<h4>Add Part</h4>';
+  const inventory = await listTruckInventory(state.truckId);
+  const partSelect = document.createElement('select');
+  inventory.forEach((item) => {
+    const opt = document.createElement('option');
+    opt.value = item.product_id;
+    opt.textContent = `${item.products?.name} (${item.qty})`;
+    partSelect.appendChild(opt);
+  });
+  const partQty = document.createElement('input');
+  partQty.type = 'number';
+  partQty.value = '1';
+  const addPartBtn = document.createElement('button');
+  addPartBtn.className = 'action success';
+  addPartBtn.textContent = 'Add Part';
+  addPartBtn.addEventListener('click', async () => {
+    const qty = parseInt(partQty.value, 10);
+    if (!partSelect.value || !qty) {
+      showToast('Select part and quantity.');
+      return;
+    }
+    await executeOrQueue('addJobPart', {
+      job_id: job.id,
+      product_id: partSelect.value,
+      truck_id: state.truckId,
+      qty,
+    }, addJobPart);
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'part_added', {
+      product_id: partSelect.value,
+      qty,
+    });
+    showToast('Part added.');
+  });
+
+  const addNonInventoryBtn = document.createElement('button');
+  addNonInventoryBtn.className = 'pill';
+  addNonInventoryBtn.textContent = 'Add Non-Inventory Part';
+  addNonInventoryBtn.addEventListener('click', async () => {
+    const description = prompt('Part description');
+    if (!description) return;
+    const qty = parseInt(prompt('Quantity') || '1', 10);
+    const purchased = confirm('Was it purchased?');
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'non_inventory_part', { description, qty, purchased });
+    showToast('Non-inventory part logged.');
+  });
+
+  partsSection.append(partSelect, partQty, addPartBtn, addNonInventoryBtn);
+  card.appendChild(partsSection);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const startBtn = document.createElement('button');
+  startBtn.className = 'action';
+  startBtn.textContent = 'Start Repair';
+  const completeBtn = document.createElement('button');
+  completeBtn.className = 'action success';
+  completeBtn.textContent = 'Repair Complete';
+  actions.append(startBtn, completeBtn);
+  card.appendChild(actions);
+
+  startBtn.addEventListener('click', async () => {
+    if (data.photos?.before && !beforeInput.files?.length) {
+      showToast('Capture before-repair photo.');
+      return;
+    }
+    state.diagnosticsRun.repairStartedAt = Date.now();
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'repair_started', {});
+  });
+
+  completeBtn.addEventListener('click', async () => {
+    const duration = state.diagnosticsRun.repairStartedAt ? Math.floor((Date.now() - state.diagnosticsRun.repairStartedAt) / 1000) : 0;
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'repair_completed', { duration_seconds: duration });
+    const nextNodeId = state.diagnosticsRun.edges.find((edge) => edge.from_node_id === node.id && edge.condition === 'next')?.to_node_id;
+    if (nextNodeId) {
+      state.diagnosticsRun.currentNodeId = nextNodeId;
+      await executeOrQueue('updateWorkflowRun', { id: state.diagnosticsRun.run.id, payload: { current_node_id: nextNodeId } }, ({ id, payload }) =>
+        updateDiagnosticWorkflowRun(id, payload)
+      );
+      state.diagnosticsRun.stepStartedAt = Date.now();
+      renderWorkflowNode(job);
+    } else {
+      renderWorkflowStart(job);
+    }
+  });
+
+  panel.appendChild(card);
+}
+
+function renderEndNode(job, node, panel) {
+  const data = node.data || {};
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h3>${node.title || 'Workflow End'}</h3>
+    <label>Closure Reason</label>
+    <textarea id="closure-reason" placeholder="Required"></textarea>
+    <label>Resolved?</label>
+    <select id="resolved">
+      <option value="">Not set</option>
+      <option value="yes">Yes</option>
+      <option value="no">No</option>
+    </select>
+    <label>Follow-up Required?</label>
+    <select id="follow-up">
+      <option value="">Not set</option>
+      <option value="yes">Yes</option>
+      <option value="no">No</option>
+    </select>
+    <label>Notes for Office</label>
+    <textarea id="notes"></textarea>
+    <div class="actions">
+      <button class="action" id="complete-end">Complete Workflow</button>
+    </div>
+  `;
+  const closureInput = card.querySelector('#closure-reason');
+  const completeBtn = card.querySelector('#complete-end');
+  completeBtn.addEventListener('click', async () => {
+    if (!closureInput.value.trim()) {
+      showToast('Closure reason required.');
+      return;
+    }
+    const payload = {
+      closure_reason: closureInput.value.trim(),
+      resolved: card.querySelector('#resolved').value,
+      follow_up: card.querySelector('#follow-up').value,
+      notes_for_office: card.querySelector('#notes').value.trim(),
+    };
+    await logDiagnosticsEvent(state.diagnosticsRun.run.id, node.id, 'workflow_completed', payload);
+    await executeOrQueue('updateWorkflowRun', {
+      id: state.diagnosticsRun.run.id,
+      payload: { status: 'completed', completed_at: new Date().toISOString() },
+    }, ({ id, payload }) => updateDiagnosticWorkflowRun(id, payload));
+    state.diagnosticsRun.run = null;
+    renderChecklist(job);
+  });
+  panel.appendChild(card);
+}
+
+function labelWrap(labelText, inputEl) {
+  const wrap = document.createElement('div');
+  const label = document.createElement('label');
+  label.textContent = labelText;
+  wrap.append(label, inputEl);
+  return wrap;
+}
+
+function renderDiagnostics(job) {
+  return renderWorkflowStart(job);
 }
 
 async function renderRepair(job) {
@@ -1563,8 +2145,8 @@ async function renderRepair(job) {
     renderChecklist(job);
   });
  panel.querySelector('#pause').addEventListener('click', () => pauseJob(job, JOB_STATUSES.ON_SITE_REPAIR));
-  panel.querySelector('#back').addEventListener('click', () => renderFoundProblem(job));
-  panel.querySelector('#repair-back').addEventListener('click', () => renderFoundProblem(job));
+  panel.querySelector('#back').addEventListener('click', () => renderWorkflowStart(job));
+  panel.querySelector('#repair-back').addEventListener('click', () => renderWorkflowStart(job));
   screenContainer(container);
 }
 
@@ -1592,6 +2174,7 @@ function renderChecklist(job) {
       <div class="actions">
         <button class="action" id="complete">Complete</button>
         <button class="action secondary" id="unable">Unable to Perform</button>
+        <button class="action secondary" id="start-another">Start Another Workflow</button>
         <button class="action secondary" id="back">Back</button>
       </div>
     </div>
@@ -1602,7 +2185,14 @@ function renderChecklist(job) {
 
   completeBtn.addEventListener('click', () => finalizeJob(job, checkboxes, false));
   unableBtn.addEventListener('click', () => finalizeJob(job, checkboxes, true));
-   panel.querySelector('#back').addEventListener('click', () => renderRepair(job));
+ panel.querySelector('#start-another').addEventListener('click', () => renderWorkflowStart(job));
+   panel.querySelector('#back').addEventListener('click', () => {
+     if (state.diagnosticsRun.run) {
+       renderWorkflowStart(job);
+     } else {
+       renderRepair(job);
+     }
+   });
   panel.querySelector('#checklist-back').addEventListener('click', () => renderRepair(job));
   screenContainer(container);
 }
@@ -1629,6 +2219,7 @@ async function finalizeJob(job, checkboxes, allowIncomplete) {
     ]);
     const durations = await getJobStatusDurations(job.id);
     await generateAndUploadReports({ job, diagnostics, repairs, parts, durations });
+    await generateAndUploadDiagnosticsReport(job);
   } else {
     await enqueueAction('generateReports', { jobId: job.id });
   }
@@ -2114,6 +2705,9 @@ state.offlineQueueHandlers = {
   addJobPart: (payload) => addJobPart(payload),
   removeJobPart: (payload) => removeJobPart(payload),
   addRepair: (payload) => addJobRepair(payload),
+  createWorkflowRun: (payload) => createDiagnosticWorkflowRun(payload),
+  updateWorkflowRun: ({ id, payload}) => updateDiagnosticWorkflowRun(id,payload),
+diagnosticEvent: (payload) => createDiagnosticRunEvent(payload),
   commitRestock: ({ truckId, restockItems }) => commitRestock(truckId, restockItems),
   outOfStock: (payload) => createOutOfStock(payload),
   createRequest: (payload) => createRequest(payload),
@@ -2129,6 +2723,7 @@ state.offlineQueueHandlers = {
     ]);
     const durations = await getJobStatusDurations(jobId);
     await generateAndUploadReports({ job, diagnostics, repairs, parts, durations });
+    await generateAndUplaodDiagnosticsReport(job);
   },
 };
 

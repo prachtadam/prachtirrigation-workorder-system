@@ -1,6 +1,12 @@
 
 import { jsPDF } from 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm';
-import { getSupabaseClient, addAttachment } from './db.js';
+import {
+  getSupabaseClient,
+  addAttachment,
+  listDiagnosticWorkflowRuns,
+  listDiagnosticRunEvents,
+  getJobStatusDurations,
+} from './db.js';
 import { getConfig } from './config.js';
 
 function addSection(doc, title, lines, y) {
@@ -71,6 +77,39 @@ function buildReport(doc, job, diagnostics, repairs, parts, durations, typeLabel
   ], y);
 }
 
+function buildDiagnosticsReport(doc, job, runs, runEventsMap) {
+  doc.setFontSize(16);
+  doc.text('Diagnostics Workflow Report', 14, 16);
+  doc.setFontSize(11);
+
+  let y = 26;
+  y = addSection(doc, 'Job', [
+    `Customer: ${job.customers?.name || ''}`,
+    `Field: ${job.fields?.name || ''}`,
+    `Job Type: ${job.job_types?.name || ''}`,
+  ], y);
+
+  const runLines = [];
+  runs.forEach((run, index) => {
+    runLines.push(`Run ${index + 1}: ${run.workflow_title || 'Workflow'} • ${run.brand_name || 'Brand'}`);
+    const events = runEventsMap.get(run.id) || [];
+    events.forEach((event) => {
+      const label = event.event_type?.replace(/_/g, ' ') || 'event';
+      const payload = event.payload ? JSON.stringify(event.payload) : '';
+      runLines.push(`  - ${label}${payload ? `: ${payload}` : ''}`);
+    });
+  });
+
+  y = addSection(doc, 'Workflow Runs', runLines.length ? runLines : ['No diagnostics workflow runs recorded.'], y);
+  y = addSection(doc, 'Totals', [
+    `Diagnostics: ${formatDuration(job.durations?.on_site_diagnostics)}`,
+    `Repair: ${formatDuration(job.durations?.on_site_repair)}`,
+  ], y);
+  addSection(doc, 'Generated', [
+    `Generated: ${new Date().toLocaleString()}`,
+  ], y);
+}
+
 async function uploadPdf(jobId, fileName, pdfBlob) {
   const client = getSupabaseClient();
   const { orgId } = getConfig();
@@ -103,4 +142,23 @@ export async function generateAndUploadReports({ job, diagnostics, repairs, part
   await addAttachment({ job_id: job.id, attachment_type: 'tech_report', file_url: techUrl });
 
   return { customerUrl, techUrl };
+}
+
+export async function generateAndUploadDiagnosticsReport(job) {
+  const runs = await listDiagnosticWorkflowRuns(job.id);
+  const runEventsMap = new Map();
+  for (const run of runs) {
+    const events = await listDiagnosticRunEvents(run.id);
+    runEventsMap.set(run.id, events);
+  }
+
+  const durations = await getJobStatusDurations(job.id);
+  const jobWithDurations = { ...job, durations };
+
+  const diagnosticsDoc = new jsPDF();
+  buildDiagnosticsReport(diagnosticsDoc, jobWithDurations, runs, runEventsMap);
+  const diagnosticsBlob = diagnosticsDoc.output('blob');
+  const diagnosticsUrl = await uploadPdf(job.id, 'diagnostics-report.pdf', diagnosticsBlob);
+  await addAttachment({ job_id: job.id, attachment_type: 'diagnostics_report', file_url: diagnosticsUrl });
+  return diagnosticsUrl;
 }

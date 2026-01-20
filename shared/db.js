@@ -163,6 +163,35 @@ export async function uploadProductImage(file, options = {}) {
   const { data } = getClient().storage.from(bucket).getPublicUrl(path);
   return data?.publicUrl || '';
 }
+
+async function uploadFileToBucket(file, { bucket, prefix }) {
+  const orgId = requireOrgId();
+  const safeName = (file?.name || 'upload')
+    .toLowerCase()
+    .replace(/[^a-z0-9.\-_]/g, '_');
+  const path = `${orgId}/${prefix}/${Date.now()}_${Math.random().toString(16).slice(2)}_${safeName}`;
+  const { error } = await getClient()
+    .storage
+    .from(bucket)
+    .upload(path, file, { upsert: true });
+  handleError(error, `Upload ${bucket} file`);
+  const { data } = getClient().storage.from(bucket).getPublicUrl(path);
+  return data?.publicUrl || '';
+}
+
+export async function uploadDiagnosticWorkflowAttachment(file, options = {}) {
+  return uploadFileToBucket(file, {
+    bucket: options.bucket || 'diagnostic-workflows',
+    prefix: options.prefix || 'workflow-attachments',
+  });
+}
+
+export async function uploadJobPhoto(file, options = {}) {
+  return uploadFileToBucket(file, {
+    bucket: options.bucket || 'job_photos',
+    prefix: options.prefix || 'diagnostic-photos',
+  });
+}
 export async function listTools() { return listTable('tools'); }
 export async function createTool(payload) { return insertTable('tools', payload); }
 export async function updateTool(id, payload) { return updateTable('tools', id, payload); }
@@ -377,6 +406,105 @@ export async function listJobDiagnostics(jobId) {
 
 export async function addJobDiagnostic(payload) { return insertTable('job_diagnostics', payload); }
 export async function deleteJobDiagnostic(id) { return deleteTable('job_diagnostics', id); }
+
+export async function listDiagnosticWorkflows() { return listTable('diagnostic_workflows'); }
+export async function createDiagnosticWorkflow(payload) { return insertTable('diagnostic_workflows', payload); }
+export async function updateDiagnosticWorkflow(id, payload) { return updateTable('diagnostic_workflows', id, payload); }
+export async function deleteDiagnosticWorkflow(id) { return deleteTable('diagnostic_workflows', id); }
+
+export async function listDiagnosticWorkflowBrands(workflowId) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_workflow_brands')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('workflow_id', workflowId)
+    .order('created_at', { ascending: true });
+  handleError(error, 'Load diagnostic workflow brands');
+  return data || [];
+}
+export async function createDiagnosticWorkflowBrand(payload) { return insertTable('diagnostic_workflow_brands', payload); }
+export async function updateDiagnosticWorkflowBrand(id, payload) { return updateTable('diagnostic_workflow_brands', id, payload); }
+export async function deleteDiagnosticWorkflowBrand(id) { return deleteTable('diagnostic_workflow_brands', id); }
+
+export async function listDiagnosticNodes(brandId) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_nodes')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('brand_id', brandId)
+    .order('created_at', { ascending: true });
+  handleError(error, 'Load diagnostic nodes');
+  return data || [];
+}
+export async function createDiagnosticNode(payload) { return insertTable('diagnostic_nodes', payload); }
+export async function updateDiagnosticNode(id, payload) { return updateTable('diagnostic_nodes', id, payload); }
+export async function deleteDiagnosticNode(id) { return deleteTable('diagnostic_nodes', id); }
+
+export async function listDiagnosticEdges(brandId) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_edges')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('brand_id', brandId)
+    .order('created_at', { ascending: true });
+  handleError(error, 'Load diagnostic edges');
+  return data || [];
+}
+export async function createDiagnosticEdge(payload) { return insertTable('diagnostic_edges', payload); }
+export async function updateDiagnosticEdge(id, payload) { return updateTable('diagnostic_edges', id, payload); }
+export async function deleteDiagnosticEdge(id) { return deleteTable('diagnostic_edges', id); }
+
+export async function listDiagnosticNodeLayouts(brandId) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_node_layout')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('brand_id', brandId)
+    .order('created_at', { ascending: true });
+  handleError(error, 'Load diagnostic node layout');
+  return data || [];
+}
+export async function upsertDiagnosticNodeLayout(payload) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_node_layout')
+    .upsert({ ...payload, org_id: orgId }, { onConflict: 'node_id' })
+    .select()
+    .single();
+  handleError(error, 'Update diagnostic node layout');
+  return data;
+}
+
+export async function listDiagnosticWorkflowRuns(jobId) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_workflow_runs')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('job_id', jobId)
+    .order('created_at', { ascending: true });
+  handleError(error, 'Load diagnostic workflow runs');
+  return data || [];
+}
+export async function createDiagnosticWorkflowRun(payload) { return insertTable('diagnostic_workflow_runs', payload); }
+export async function updateDiagnosticWorkflowRun(id, payload) { return updateTable('diagnostic_workflow_runs', id, payload); }
+
+export async function listDiagnosticRunEvents(runId) {
+  const orgId = requireOrgId();
+  const { data, error } = await getClient()
+    .from('diagnostic_run_events')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('run_id', runId)
+    .order('created_at', { ascending: true });
+  handleError(error, 'Load diagnostic run events');
+  return data || [];
+}
+export async function createDiagnosticRunEvent(payload) { return insertTable('diagnostic_run_events', payload); }
 
 export async function addJobRepair(payload) { return insertTable('job_repairs', payload); }
 
