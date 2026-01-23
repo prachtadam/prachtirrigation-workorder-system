@@ -283,8 +283,8 @@ strong{ font-weight: 900; letter-spacing: .2px; }
 
 /* Hamburger */
 .hamburger{
-  width: 42px;
-  height: 42px;
+  width: 64px;
+  height: 64px;
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -301,8 +301,8 @@ strong{ font-weight: 900; letter-spacing: .2px; }
 }
 
 .hamburger-logo{
-  width: 28px;
-  height: 28px;
+  width: 56px;
+  height: 56px;
   border-radius: var(--r-8);
   object-fit: cover;
 }
@@ -1215,8 +1215,63 @@ button.action.wide{
   background: rgba(255,255,255,.04);
 }
 
+/* =============================
+   Diagnostics Workflow Builder
+============================= */
+.diagnostics-flow-grid{
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(260px, 1.2fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.diagnostics-diagram{
+  position: relative;
+  min-height: 360px;
+  margin-top: 16px;
+  background: var(--panel-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-12);
+  overflow: hidden;
+}
+
+.diagram-node{
+  position: absolute;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-12);
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+}
+
+.diagram-node.check{ border-color: rgba(96,165,250,.5); }
+.diagram-node.repair{ border-color: rgba(34,197,94,.6); }
+.diagram-node.end{ border-color: rgba(239,68,68,.6); }
+.diagram-node.dangling{ box-shadow: 0 0 0 2px rgba(239,68,68,.35); }
+
+.diagram-lines{
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.diagram-lines line{
+  stroke: rgba(232,238,247,.35);
+  stroke-width: 2;
+}
+
+.diagram-lines line[data-condition="good"]{ stroke: rgba(34,197,94,.7); }
+.diagram-lines line[data-condition="bad"]{ stroke: rgba(239,68,68,.7); }
+.diagram-lines line[data-condition="next"]{ stroke: rgba(96,165,250,.7); }
+
+
 @media (max-width: 900px){
   .menu-grid{ grid-template-columns: 1fr; }
+  .diagnostics-flow-grid{ grid-template-columns: 1fr; }
 }
 
 
