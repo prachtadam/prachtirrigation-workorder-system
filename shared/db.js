@@ -426,7 +426,7 @@ export async function listJobDiagnostics(jobId) {
 export async function addJobDiagnostic(payload) { return insertTable('job_diagnostics', payload); }
 export async function deleteJobDiagnostic(id) { return deleteTable('job_diagnostics', id); }
 
-const DIAGNOSTIC_WORKFLOW_TABLES = ['diagnostic_workflows', 'diagnostic_workflow'];
+const DIAGNOSTIC_WORKFLOW_TABLES = ['workflows', 'diagnostic_workflows', 'diagnostic_workflow'];
 
 async function listDiagnosticWorkflowTable(table) {
   const orgId = requireOrgId();
