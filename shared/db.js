@@ -438,11 +438,38 @@ async function listDiagnosticWorkflowTable(table) {
     return result;
 }
 
+function buildDiagnosticWorkflowPayload(table, payload, orgId) {
+  const nextPayload = { ...payload };
+  if (orgId) {
+    nextPayload.org_id = orgId;
+  }
+  if (table === 'workflows') {
+    if (nextPayload.title && !nextPayload.name) {
+      nextPayload.name = nextPayload.title;
+    }
+    delete nextPayload.title;
+  } else {
+    if (nextPayload.name && !nextPayload.title) {
+      nextPayload.title = nextPayload.name;
+    }
+    delete nextPayload.name;
+  }
+  return nextPayload;
+}
+
+function normalizeDiagnosticWorkflowRecord(record) {
+  if (!record) return record;
+  return {
+    ...record,
+    title: record.title || record.name || '',
+  };
+}
+
 async function insertDiagnosticWorkflowTable(table, payload) {
   const orgId = requireOrgId();
   const result = await getClient()
     .from(table)
-    .insert({ ...payload, org_id: orgId })
+    .insert(buildDiagnosticWorkflowPayload(table, payload, orgId))
     .select()
     .single();
 return result;
@@ -451,7 +478,7 @@ return result;
 async function updateDiagnosticWorkflowTable(table, id, payload) {
   return getClient()
     .from(table)
-    .update(payload)
+    .update(buildDiagnosticWorkflowPayload(table, payload))
     .eq('id', id)
     .select()
     .single();
@@ -480,15 +507,17 @@ async function withDiagnosticWorkflowTable(action, context) {
 
 export async function listDiagnosticWorkflows() {
   const data = await withDiagnosticWorkflowTable(listDiagnosticWorkflowTable, 'Load diagnostic workflows');
-  return data || [];
+  return (data || []).map(normalizeDiagnosticWorkflowRecord);
 }
 
 export async function createDiagnosticWorkflow(payload) {
-  return withDiagnosticWorkflowTable((table) => insertDiagnosticWorkflowTable(table, payload), 'Create diagnostic workflow');
+  const data = await withDiagnosticWorkflowTable((table) => insertDiagnosticWorkflowTable(table, payload), 'Create diagnostic workflow');
+  return normalizeDiagnosticWorkflowRecord(data);
 }
 
 export async function updateDiagnosticWorkflow(id, payload) {
-  return withDiagnosticWorkflowTable((table) => updateDiagnosticWorkflowTable(table, id, payload), 'Update diagnostic workflow');
+  const data = await withDiagnosticWorkflowTable((table) => updateDiagnosticWorkflowTable(table, id, payload), 'Update diagnostic workflow');
+  return normalizeDiagnosticWorkflowRecord(data);
 }
 
 export async function deleteDiagnosticWorkflow(id) {
