@@ -430,35 +430,22 @@ const DIAGNOSTIC_WORKFLOW_TABLES = ['workflows', 'diagnostic_workflows', 'diagno
 
 async function listDiagnosticWorkflowTable(table) {
   const orgId = requireOrgId();
- const result = await getClient()
+  const result = await getClient()
     .from(table)
     .select('*')
     .eq('org_id', orgId)
-    .order('created_at', { ascending: true });
-    if (!result.error || result.error.code !== '42703') {
+    .order('created_at', {ascending: true });
     return result;
-  }
-  return getClient()
-    .from(table)
-    .select('*')
-    .order('created_at', { ascending: true });
 }
 
 async function insertDiagnosticWorkflowTable(table, payload) {
   const orgId = requireOrgId();
- const result = await getClient()
+  const result = await getClient()
     .from(table)
     .insert({ ...payload, org_id: orgId })
     .select()
     .single();
-    if (!result.error || result.error.code !== '42703') {
-    return result;
-  }
-  return getClient()
-    .from(table)
-    .insert(payload)
-    .select()
-    .single();
+return result;
 }
 
 async function updateDiagnosticWorkflowTable(table, id, payload) {
