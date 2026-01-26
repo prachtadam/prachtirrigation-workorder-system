@@ -457,6 +457,26 @@ function buildDiagnosticWorkflowPayload(table, payload, orgId) {
   return nextPayload;
 }
 
+function buildWorkflowPayloadVariants(payload, orgId) {
+  const basePayload = { ...payload };
+  if (orgId) {
+    basePayload.org_id = orgId;
+  }
+  const namePayload = { ...basePayload };
+  if (namePayload.title && !namePayload.name) {
+    namePayload.name = namePayload.title;
+  }
+  delete namePayload.title;
+
+  const titlePayload = { ...basePayload };
+  if (titlePayload.name && !titlePayload.title) {
+    titlePayload.title = titlePayload.name;
+  }
+  delete titlePayload.name;
+
+  return [namePayload, titlePayload];
+}
+
 function normalizeDiagnosticWorkflowRecord(record) {
   if (!record) return record;
   return {
@@ -467,15 +487,53 @@ function normalizeDiagnosticWorkflowRecord(record) {
 
 async function insertDiagnosticWorkflowTable(table, payload) {
   const orgId = requireOrgId();
+   if (table === 'workflows') {
+    const [namePayload, titlePayload] = buildWorkflowPayloadVariants(payload, orgId);
+    let result = await getClient()
+      .from(table)
+      .insert(namePayload)
+      .select()
+      .single();
+    if (!result.error) return result;
+    if (result.error.code !== '23502' && result.error.code !== '42703') {
+      return result;
+    }
+    result = await getClient()
+      .from(table)
+      .insert(titlePayload)
+      .select()
+      .single();
+    return result;
+  }
   const result = await getClient()
     .from(table)
     .insert(buildDiagnosticWorkflowPayload(table, payload, orgId))
     .select()
     .single();
-return result;
+  return result;
 }
 
 async function updateDiagnosticWorkflowTable(table, id, payload) {
+  if (table === 'workflows') {
+    const [namePayload, titlePayload] = buildWorkflowPayloadVariants(payload);
+    let result = await getClient()
+      .from(table)
+      .update(namePayload)
+      .eq('id', id)
+      .select()
+      .single();
+    if (!result.error) return result;
+    if (result.error.code !== '42703') {
+      return result;
+    }
+    result = await getClient()
+      .from(table)
+      .update(titlePayload)
+      .eq('id', id)
+      .select()
+      .single();
+    return result;
+  } 
   return getClient()
     .from(table)
     .update(buildDiagnosticWorkflowPayload(table, payload))
