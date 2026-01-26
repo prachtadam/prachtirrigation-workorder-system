@@ -1,4 +1,4 @@
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/module/index.js';
 import { getConfig, DEFAULT_CONFIG } from './config.js';
 import { JOB_STATUSES } from './types.js';
 
