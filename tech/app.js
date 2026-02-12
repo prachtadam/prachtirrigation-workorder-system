@@ -132,6 +132,25 @@ function formatDuration(seconds) {
   return formatElapsed(seconds);
 }
 
+function isInquiryJob(job) {
+  return `${job?.job_types?.name || ''}`.trim().toLowerCase() === 'inquiry';
+}
+
+async function updateInquiryStatus(job, status, timestampField) {
+  await executeOrQueue('setJobStatus', { jobId: job.id, status }, ({ jobId, status: nextStatus }) =>
+    setJobStatus(jobId, nextStatus)
+  );
+  if (!timestampField) return;
+  try {
+    await executeOrQueue('updateJob', {
+      id: job.id,
+      payload: { [timestampField]: new Date().toISOString() },
+    }, ({ id, payload }) => updateJob(id, payload));
+  } catch (error) {
+    console.warn('Inquiry timestamp update skipped', error);
+  }
+}
+
 function hashWorkflowPayload(payload) {
   let hash = 0;
   const input = JSON.stringify(payload);
@@ -691,7 +710,7 @@ function renderHome() {
 }
 
 async function updateBadgeCounts() {
-  const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED] });
+  const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED, JOB_STATUSES.ON_THE_WAY, JOB_STATUSES.ON_SITE_DIAGNOSTICS] });
   const restock = await getRestockList(state.truckId);
   const openCount = document.getElementById('open-count');
   const restockCount = document.getElementById('restock-count');
@@ -1057,7 +1076,7 @@ panel.innerHTML = `
 }
 
 async function renderOpenJobs() {
-  const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED] });
+ const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED, JOB_STATUSES.ON_THE_WAY, JOB_STATUSES.ON_SITE_DIAGNOSTICS] });
   const activeEvents = await listActiveJobEvents(jobs.map((job) => job.id));
   const { container, panel } = createAppLayout();
   panel.classList.add('panel-stack');
@@ -1188,7 +1207,7 @@ async function renderTechMap() {
     return;
   }
 
-  const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED] });
+ const jobs = await listJobs({ statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.PAUSED, JOB_STATUSES.ON_THE_WAY, JOB_STATUSES.ON_SITE_DIAGNOSTICS] });
   const coordsJobs = jobs.map((job) => ({ job, coords: getJobCoords(job) })).filter(({ coords }) => coords);
 
   if (!coordsJobs.length && !navigator.geolocation) {
@@ -1300,7 +1319,7 @@ async function renderJobCard(job) {
       <p><strong>Job Type:</strong> ${job.job_types?.name}</p>
       <p>${job.description || ''}</p>
       <div class="actions">
-        <button class="action" id="take-job">Take Job</button>
+        <button class="action" id="take-job">${isInquiryJob(job) ? 'Open Inquiry' : 'Take Job'}</button>
        <button class="action secondary" id="job-card-secondary-back">Back</button>
       </div>
     </div>
@@ -1358,7 +1377,118 @@ async function renderJobCard(job) {
   }
   panel.querySelector('#job-card-back').addEventListener('click', renderOpenJobs);
   panel.querySelector('#job-card-secondary-back').addEventListener('click', renderOpenJobs);
-  panel.querySelector('#take-job').addEventListener('click', () => renderRoutePrompt(job));
+  panel.querySelector('#take-job').addEventListener('click', () => {
+    if (isInquiryJob(job)) {
+      renderInquiryCapture(job);
+      return;
+    }
+    renderRoutePrompt(job);
+  });
+  screenContainer(container);
+}
+
+
+async function renderInquiryCapture(job) {
+  saveLastScreen('inquiry', job.id);
+  const { container, panel } = createAppLayout();
+  panel.classList.add('panel-stack');
+  const parts = await listJobParts(job.id);
+  const attachments = job.attachments || [];
+  const photos = attachments.filter((att) => (att.attachment_type || '').startsWith('inquiry_photo'));
+  const drawing = attachments.find((att) => att.attachment_type === 'inquiry_drawing');
+  panel.innerHTML = `
+    <div class="screenTitle">
+      <button class="backBtn" id="inquiry-back">←</button>
+      <h2>Inquiry</h2>
+      <span class="badge">${getTruckLabel()}</span>
+    </div>
+    <div class="card">
+      <h3>${job.customers?.name || ''} · ${job.fields?.name || ''}</h3>
+      <div class="actions">
+        <button class="action" id="inquiry-on-way">On the way</button>
+        <button class="action" id="inquiry-arrived">Arrived</button>
+      </div>
+      <label>Description</label>
+      <textarea id="inquiry-description" placeholder="Inquiry details">${job.description || ''}</textarea>
+      <label>Add Part</label>
+      <select id="inquiry-part-select"><option value="">Select part…</option>${state.boot.products.map((product) => `<option value="${product.id}">${product.name}</option>`).join('')}</select>
+      <input id="inquiry-part-qty" type="number" min="1" value="1" />
+      <button class="pill" id="inquiry-add-part">Add Part</button>
+      <div class="list" id="inquiry-parts-list">${parts.map((part) => `<div class="pill">${part.products?.name || 'Part'} (x${part.qty})</div>`).join('') || '<div class="muted">No parts added.</div>'}</div>
+      <label>Photos</label>
+      <input id="inquiry-photos" type="file" accept="image/*" capture="environment" multiple />
+      <div class="list">${photos.map((photo) => `<a class="pill" href="${photo.file_url}" target="_blank" rel="noreferrer">Photo</a>`).join('') || '<div class="muted">No photos uploaded.</div>'}</div>
+      <label>Drawing (optional)</label>
+      <canvas id="inquiry-canvas" width="320" height="220" style="border:1px solid var(--line,#334155); width:100%; background-size:20px 20px; background-image:linear-gradient(to right, rgba(148,163,184,0.2) 1px, transparent 1px), linear-gradient(to bottom, rgba(148,163,184,0.2) 1px, transparent 1px);"></canvas>
+      <div class="actions"><button class="pill" id="inquiry-pen">Pen</button><button class="pill" id="inquiry-eraser">Eraser</button><button class="pill" id="inquiry-clear">Clear</button></div>
+      ${drawing ? `<a class="pill" href="${drawing.file_url}" target="_blank" rel="noreferrer">Open saved drawing</a>` : '<div class="muted">No drawing uploaded.</div>'}
+      <button class="action" id="inquiry-save">Save Inquiry</button>
+    </div>
+  `;
+  panel.querySelector('#inquiry-back').addEventListener('click', () => renderJobCard(job));
+  panel.querySelector('#inquiry-on-way').addEventListener('click', async () => {
+    await updateInquiryStatus(job, JOB_STATUSES.ON_THE_WAY, 'on_the_way_at');
+    showToast('Inquiry marked on the way.');
+  });
+  panel.querySelector('#inquiry-arrived').addEventListener('click', async () => {
+    await updateInquiryStatus(job, JOB_STATUSES.ON_SITE_DIAGNOSTICS, 'arrived_at');
+    showToast('Inquiry marked arrived.');
+  });
+  panel.querySelector('#inquiry-add-part').addEventListener('click', async () => {
+    const productId = panel.querySelector('#inquiry-part-select').value;
+    const qty = Number(panel.querySelector('#inquiry-part-qty').value || 1);
+    if (!productId || qty < 1) return;
+    await addJobPart({ job_id: job.id, product_id: productId, truck_id: state.truckId, qty });
+    showToast('Part added.');
+    renderInquiryCapture(job);
+  });
+  const canvas = panel.querySelector('#inquiry-canvas');
+  const ctx = canvas.getContext('2d');
+  let drawingMode = 'pen';
+  let drawingActive = false;
+  let lastPoint = null;
+  const getPoint = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: (event.clientX - rect.left) * (canvas.width / rect.width), y: (event.clientY - rect.top) * (canvas.height / rect.height) };
+  };
+  const drawTo = (point) => {
+    if (!lastPoint) { lastPoint = point; return; }
+    ctx.lineWidth = drawingMode === 'eraser' ? 14 : 2;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = drawingMode === 'eraser' ? '#ffffff' : '#0f172a';
+    ctx.beginPath();
+    ctx.moveTo(lastPoint.x, lastPoint.y);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    lastPoint = point;
+  };
+  canvas.addEventListener('pointerdown', (event) => { drawingActive = true; lastPoint = getPoint(event); });
+  canvas.addEventListener('pointermove', (event) => { if (!drawingActive) return; drawTo(getPoint(event)); });
+  window.addEventListener('pointerup', () => { drawingActive = false; lastPoint = null; });
+  panel.querySelector('#inquiry-pen').addEventListener('click', () => { drawingMode = 'pen'; });
+  panel.querySelector('#inquiry-eraser').addEventListener('click', () => { drawingMode = 'eraser'; });
+  panel.querySelector('#inquiry-clear').addEventListener('click', () => { ctx.clearRect(0, 0, canvas.width, canvas.height); });
+  panel.querySelector('#inquiry-save').addEventListener('click', async () => {
+    const description = panel.querySelector('#inquiry-description').value.trim();
+    await updateJob(job.id, { description });
+    const files = Array.from(panel.querySelector('#inquiry-photos').files || []);
+    for (const file of files) {
+      const url = await uploadJobPhoto(file, { prefix: `job/${job.id}/inquiry` });
+      await addAttachment({ job_id: job.id, attachment_type: 'inquiry_photo', file_url: url });
+    }
+    await new Promise((resolve) => canvas.toBlob(async (blob) => {
+      if (!blob || blob.size < 1500) { resolve(); return; }
+      const drawingFile = new File([blob], `inquiry-drawing-${Date.now()}.png`, { type: 'image/png' });
+      const drawingUrl = await uploadJobPhoto(drawingFile, { prefix: `job/${job.id}/inquiry` });
+      await addAttachment({ job_id: job.id, attachment_type: 'inquiry_drawing', file_url: drawingUrl });
+      resolve();
+    }, 'image/png'));
+    showToast('Inquiry saved.');
+    await refreshAppState();
+    const refreshed = await getJob(job.id);
+    renderInquiryCapture(refreshed);
+  });
+
   screenContainer(container);
 }
 
@@ -2448,6 +2578,7 @@ async function pauseJob(job, lastStatus) {
 async function resumeJob(screen) {
   if (!state.currentJob) return renderHome();
   if (screen === 'diagnostics') return renderDiagnostics(state.currentJob);
+    if (screen === 'inquiry') return renderInquiryCapture(state.currentJob);
   if (screen === 'repair') return renderRepair(state.currentJob);
   if (screen === 'checklist') return renderChecklist(state.currentJob);
   return renderHome();

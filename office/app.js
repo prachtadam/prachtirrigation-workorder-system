@@ -72,6 +72,7 @@ import {
   upsertDiagnosticNodeLayout,
   uploadDiagnosticWorkflowAttachment,
   getSupabaseClient,
+  listJobParts,
 } from '../shared/db.js';
 import { getConfig, saveConfig } from '../shared/config.js';
 import { JOB_STATUSES } from '../shared/types.js';
@@ -100,7 +101,12 @@ const state = {
     brandId: null,
     nodeId: null,
   },
+  createJobMode: 'job',
 };
+function isInquiryJob(job) {
+  const typeName = job?.job_types?.name || '';
+  return typeName.trim().toLowerCase() === 'inquiry';
+}
 
 function showToast(message) {
   toast.textContent = message;
@@ -850,9 +856,19 @@ async function renderJobBoardList(filterId) {
   createButton.className = 'pill';
   createButton.textContent = '+ Create Job';
   createButton.addEventListener('click', () => {
-  openCreateJobModal();
+   state.createJobMode = 'job';
+    openCreateJobModal();
   });
   listPanel.appendChild(createButton);
+
+const createInquiryButton = document.createElement('button');
+  createInquiryButton.className = 'pill secondary';
+  createInquiryButton.textContent = '+ Create Inquiry';
+  createInquiryButton.addEventListener('click', () => {
+    state.createJobMode = 'inquiry';
+    openCreateJobModal();
+  });
+  listPanel.appendChild(createInquiryButton);
 
   const filterMap = {
     open: { statuses: [JOB_STATUSES.PAUSED, JOB_STATUSES.OPEN] },
@@ -861,6 +877,7 @@ async function renderJobBoardList(filterId) {
     finished: { statuses: [JOB_STATUSES.FINISHED] },
     invoiced: { statuses: [JOB_STATUSES.INVOICED] },
     closed: { statuses: [JOB_STATUSES.INVOICED, JOB_STATUSES.CANCELED] },
+     inquiries: { statuses: [JOB_STATUSES.OPEN, JOB_STATUSES.ON_THE_WAY, JOB_STATUSES.ON_SITE_DIAGNOSTICS, JOB_STATUSES.ON_SITE_REPAIR, JOB_STATUSES.PAUSED, JOB_STATUSES.FINISHED] },
   };
 
   const filter = { ...filterMap[filterId] };
@@ -883,7 +900,11 @@ async function renderJobBoardList(filterId) {
   ]);
   const activeEvents = await listActiveJobEvents(jobs.map((job) => job.id));
 
-  const sortedJobs = jobs.slice().sort((a, b) => {
+  const visibleJobs = filterId === 'inquiries'
+    ? jobs.filter((job) => isInquiryJob(job))
+    : jobs.filter((job) => !isInquiryJob(job));
+
+  const sortedJobs = visibleJobs.slice().sort((a, b) => {
     if (filterId === 'open') {
       if (a.status === JOB_STATUSES.PAUSED && b.status !== JOB_STATUSES.PAUSED) return -1;
       if (a.status !== JOB_STATUSES.PAUSED && b.status === JOB_STATUSES.PAUSED) return 1;
@@ -918,6 +939,7 @@ async function renderJobBoardList(filterId) {
       </div>
        <div class="job-pill-row job-pill-sub">
         <span class="job-pill-type">${escapeHtml(job.job_types?.name || 'Job')}</span>
+        ${isInquiryJob(job) ? '<span class="badge">Inquiry</span>' : ''}
         <span class="job-pill-sep">-</span>
         <span class="job-pill-description" title="${escapeHtml(descriptionText)}">${escapeHtml(descriptionText)}</span>
         
@@ -1093,6 +1115,7 @@ async function openJobDetailModal(job, filterId, options = {}) {
           <p><strong>Age:</strong> ${formatDuration((Date.now() - new Date(job.created_at)) / 1000)}</p>
           <p><strong>Job Type:</strong> ${escapeHtml(job.job_types?.name || '')}</p>
           <p><strong>Description:</strong> ${escapeHtml(description)}</p>
+           ${isInquiryJob(job) ? `<p><strong>Inquiry Status:</strong> ${job.status === JOB_STATUSES.ON_THE_WAY ? 'On the way' : (job.status === JOB_STATUSES.ON_SITE_DIAGNOSTICS || job.status === JOB_STATUSES.ON_SITE_REPAIR || job.status === JOB_STATUSES.FINISHED ? 'Arrived' : 'Open')}</p><p><strong>On the way at:</strong> ${job.on_the_way_at ? new Date(job.on_the_way_at).toLocaleString() : '--'}</p><p><strong>Arrived at:</strong> ${job.arrived_at ? new Date(job.arrived_at).toLocaleString() : '--'}</p>` : ''}
         </div>
         <div>
           <h4>Time in Status</h4>
@@ -1108,6 +1131,7 @@ async function openJobDetailModal(job, filterId, options = {}) {
           <h4>Reports</h4>
           ${reportsMarkup}
         </div>
+          <div id="inquiry-details"></div>
        <div class="section-stack">
           <label for="job-office-notes">Office Notes</label>
           <textarea id="job-office-notes" placeholder="Add office notes...">${escapeHtml(officeNotes)}</textarea>
@@ -1128,6 +1152,23 @@ async function openJobDetailModal(job, filterId, options = {}) {
   modal.querySelector('[data-close]').addEventListener('click', close);
   modal.querySelector('[data-cancel]').addEventListener('click', close);
   modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+
+if (isInquiryJob(job)) {
+    const inquiryNode = modal.querySelector('#inquiry-details');
+    if (inquiryNode) {
+      const parts = await listJobParts(job.id);
+      const photos = (job.attachments || []).filter((att) => (att.attachment_type || '').startsWith('inquiry_photo'));
+      const drawing = (job.attachments || []).find((att) => att.attachment_type === 'inquiry_drawing');
+      inquiryNode.innerHTML = `
+        <h4>Inquiry Capture</h4>
+        <p><strong>Parts:</strong> ${parts.length ? parts.map((part) => `${escapeHtml(part.products?.name || 'Part')} (x${part.qty})`).join(', ') : 'None yet'}</p>
+        <p><strong>Photos:</strong></p>
+        <div class="list">${photos.length ? photos.map((photo) => `<a class="pill" href="${photo.file_url}" target="_blank" rel="noreferrer">Open photo</a>`).join('') : '<span class="muted">No photos uploaded.</span>'}</div>
+        <p><strong>Drawing:</strong> ${drawing ? `<a href="${drawing.file_url}" target="_blank" rel="noreferrer">Open drawing</a>` : 'No drawing uploaded.'}</p>
+      `;
+    }
+  }
 
   const notesButton = modal.querySelector('[data-save-notes]');
   const notesInput = modal.querySelector('#job-office-notes');
@@ -1213,6 +1254,7 @@ async function openCreateJobModal() {
   const customerList = document.getElementById('customer-options');
   const fieldList = document.getElementById('field-options');
   const jobTypeSelect = form?.querySelector('select[name="job_type_id"]');
+   const modalTitle = modal?.querySelector('.modal-title');
 
   if (!modal || !form || !customerInput || !fieldInput || !jobTypeSelect || !customerList || !fieldList) return;
   if (!state.boot) await refreshBoot();
@@ -1227,6 +1269,11 @@ async function openCreateJobModal() {
   jobTypeSelect.innerHTML = state.boot.jobTypes
     .map((jobType) => `<option value="${jobType.id}">${jobType.name}</option>`)
     .join('');
+if (modalTitle) modalTitle.textContent = state.createJobMode === 'inquiry' ? 'Create Inquiry' : 'Create Job';
+  if (state.createJobMode === 'inquiry') {
+    const inquiryType = state.boot.jobTypes.find((type) => `${type.name || ''}`.trim().toLowerCase() === 'inquiry');
+    if (inquiryType) jobTypeSelect.value = inquiryType.id;
+  }
 
   const updateFieldOptions = () => {
     const selectedCustomer = getItemByName(state.boot.customers, customerInput.value);
@@ -4661,11 +4708,15 @@ async function renderDiagnosticsBuilder() {
   editWorkflowBtn.className = 'pill';
   editWorkflowBtn.textContent = 'Edit Problem';
   editWorkflowBtn.disabled = !selectedWorkflow;
+  const duplicateWorkflowBtn = document.createElement('button');
+  duplicateWorkflowBtn.className = 'pill';
+  duplicateWorkflowBtn.textContent = 'Duplicate';
+  duplicateWorkflowBtn.disabled = !selectedWorkflow;
   const deleteWorkflowBtn = document.createElement('button');
   deleteWorkflowBtn.className = 'pill danger';
   deleteWorkflowBtn.textContent = 'Delete';
   deleteWorkflowBtn.disabled = !selectedWorkflow;
-  workflowActions.append(editWorkflowBtn, deleteWorkflowBtn);
+ workflowActions.append(editWorkflowBtn, duplicateWorkflowBtn, deleteWorkflowBtn);
 
   listCard.append(header, workflowList, workflowActions);
 
@@ -4758,6 +4809,48 @@ async function renderDiagnosticsBuilder() {
       close();
       renderDiagnosticsBuilder();
     });
+  });
+
+   duplicateWorkflowBtn.addEventListener('click', async () => {
+    if (!selectedWorkflow) return;
+    const copyTitle = `${selectedWorkflow.title || 'Workflow'} (Copy)`;
+    const created = await createDiagnosticWorkflow({ title: copyTitle });
+    const sourceBrands = await listDiagnosticWorkflowBrands(selectedWorkflow.id);
+    for (const brand of sourceBrands) {
+      const newBrand = await createDiagnosticWorkflowBrand({
+        workflow_id: created.id,
+        brand_name: brand.brand_name,
+        status: 'draft',
+        pre_work_instructions: brand.pre_work_instructions || '',
+      });
+      const [sourceNodes, sourceEdges] = await Promise.all([
+        listDiagnosticNodes(brand.id),
+        listDiagnosticEdges(brand.id),
+      ]);
+      const idMap = new Map();
+      for (const node of sourceNodes) {
+        const inserted = await createDiagnosticNode({
+          brand_id: newBrand.id,
+          node_type: node.node_type,
+          title: node.title,
+          payload: node.payload,
+        });
+        idMap.set(node.id, inserted.id);
+      }
+      for (const edge of sourceEdges) {
+        await createDiagnosticEdge({
+          brand_id: newBrand.id,
+          from_node_id: idMap.get(edge.from_node_id),
+          to_node_id: idMap.get(edge.to_node_id),
+          condition: edge.condition,
+        });
+      }
+    }
+    state.diagnosticsBuilder.workflowId = created.id;
+    state.diagnosticsBuilder.brandId = null;
+    state.diagnosticsBuilder.nodeId = null;
+    showToast('Workflow duplicated.');
+    renderDiagnosticsBuilder();
   });
 
   deleteWorkflowBtn.addEventListener('click', async () => {
@@ -5549,20 +5642,23 @@ async function updateQuickViewCounts() {
 
   try {
     const jobs = await fetchAllJobsSafe();
-   const counts = { open:0, paused:0, in_progress:0, finished:0, closed:0 };
+   const counts = { open:0, paused:0, in_progress:0, finished:0, closed:0, inquiries:0 };
     for (const j of jobs){
       const k = quickViewStatusKey(j);
       if (k==='paused') counts.paused++;
       else if (k==='in_progress') counts.in_progress++;
       else if (k==='finished') counts.finished++;
-      else if (k==='closed', counts.closed);
+      else if (k==='closed') counts.closed++;
       else counts.open++;
+        if (isInquiryJob(j) && ![JOB_STATUSES.INVOICED, JOB_STATUSES.CANCELED].includes(j.status)) counts.inquiries++;
     }
     const set = (key,val)=> document.querySelectorAll(`[data-count="${key}"]`).forEach(el=> el.textContent=String(val));
     set('open', counts.open);
     set('paused', counts.paused);
     set('in_progress', counts.in_progress);
     set('finished', counts.finished);
+     set('closed', counts.closed);
+    set('inquiries', counts.inquiries);
   } catch(e) {}
   try {
     const reqs = await listRequests();
@@ -5594,10 +5690,20 @@ function bindCreateJobShortcut() {
   const btn = document.getElementById('create-job-btn');
   if (!btn) return;
   btn.addEventListener('click', () => {
+     state.createJobMode = 'job';
     openCreateJobModal();
   });
 }
 
+
+function bindCreateInquiryShortcut() {
+  const btn = document.getElementById('create-inquiry-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    state.createJobMode = 'inquiry';
+    openCreateJobModal();
+  });
+}
 
 function bindInventoryMapShortcut() {
   const btn = document.getElementById('open-inventory-map');
@@ -5646,6 +5752,8 @@ function bindCreateJobModal() {
     if (saveBtn) saveBtn.disabled = true;
 
     try {
+       const selectedJobType = state.boot.jobTypes.find((type) => type.id === jobTypeId);
+      const inquiryMode = state.createJobMode === 'inquiry' || `${selectedJobType?.name || ''}`.trim().toLowerCase() === 'inquiry';
       const payload = {
         customer_id: customerId,
         field_id: fieldId,
@@ -5653,6 +5761,11 @@ function bindCreateJobModal() {
         description,
         status: JOB_STATUSES.OPEN,
       };
+       if (inquiryMode) {
+        payload.on_the_way_at = null;
+        payload.arrived_at = null;
+      }
+
       const job = await createJob(payload);
 
       if (attachment) {
@@ -5664,7 +5777,7 @@ function bindCreateJobModal() {
         });
       }
 
-      showToast('Job created.');
+    showToast(inquiryMode ? 'Inquiry created.' : 'Job created.');
       await closeCreateJobModal({ returnHome: true });
       await updateQuickViewCounts();
     } catch (error) {
@@ -5680,6 +5793,7 @@ bindHamburgerMenuUI();
 bindQuickViews();
 bindCreateJobShortcut();
 bindInventoryMapShortcut();
+bindCreateInquiryShortcut();
 bindCreateJobModal();
 setView('job-board');
 updateQuickViewCounts();
