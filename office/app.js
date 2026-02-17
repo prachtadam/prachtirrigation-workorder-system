@@ -108,6 +108,13 @@ function isInquiryJob(job) {
   return typeName.trim().toLowerCase() === 'inquiry';
 }
 
+function extractInquiryDecision(notes) {
+  if (!notes) return '';
+  const lines = `${notes}`.split('\n').map((line) => line.trim()).filter(Boolean);
+  const match = [...lines].reverse().find((line) => line.toLowerCase().startsWith('inquiry accepted') || line.toLowerCase().startsWith('inquiry rejected'));
+  return match || '';
+}
+
 function showToast(message) {
   toast.textContent = message;
   toast.hidden = false;
@@ -1098,6 +1105,7 @@ async function openJobDetailModal(job, filterId, options = {}) {
       .join('<br/>')
     : '<p>No reports yet.</p>';
 
+     const nonInquiryTypes = (state.boot?.jobTypes || []).filter((type) => `${type?.name || ''}`.trim().toLowerCase() !== 'inquiry');
   const modal = document.createElement('div');
   modal.className = 'modal';
   modal.innerHTML = `
@@ -1140,6 +1148,7 @@ async function openJobDetailModal(job, filterId, options = {}) {
       <div class="modal-foot">
         <button class="pill secondary" type="button" data-cancel>Close</button>
         <button class="action" type="button" data-save-notes>Save Notes</button>
+        ${isInquiryJob(job) ? '<button class="action" type="button" data-action="accept-inquiry">Accept Inquiry</button><button class="action danger" type="button" data-action="reject-inquiry">Reject Inquiry</button>' : ''}
         ${job.status !== JOB_STATUSES.INVOICED && job.status !== JOB_STATUSES.CANCELED ? '<button class="action" data-action="invoice">Mark Invoiced</button>' : ''}
         ${job.status !== JOB_STATUSES.CANCELED ? '<button class="action danger" data-action="cancel">Cancel Job</button>' : ''}
       </div>
@@ -1162,6 +1171,7 @@ if (isInquiryJob(job)) {
       const drawing = (job.attachments || []).find((att) => att.attachment_type === 'inquiry_drawing');
       inquiryNode.innerHTML = `
         <h4>Inquiry Capture</h4>
+        <p><strong>Decision:</strong> ${escapeHtml(extractInquiryDecision(job.office_notes || '') || 'Pending')}</p>
         <p><strong>Parts:</strong> ${parts.length ? parts.map((part) => `${escapeHtml(part.products?.name || 'Part')} (x${part.qty})`).join(', ') : 'None yet'}</p>
         <p><strong>Photos:</strong></p>
         <div class="list">${photos.length ? photos.map((photo) => `<a class="pill" href="${photo.file_url}" target="_blank" rel="noreferrer">Open photo</a>`).join('') : '<span class="muted">No photos uploaded.</span>'}</div>
@@ -1180,6 +1190,61 @@ if (isInquiryJob(job)) {
       showToast(error.message);
     }
   });
+
+  const acceptInquiryBtn = modal.querySelector('[data-action="accept-inquiry"]');
+  if (acceptInquiryBtn) {
+    acceptInquiryBtn.addEventListener('click', async () => {
+      if (!nonInquiryTypes.length) {
+        showToast('Create at least one non-inquiry job type before accepting.');
+        return;
+      }
+      const options = nonInquiryTypes.map((type) => `${type.id}:${type.name}`).join('\n');
+      const selectedType = prompt(`Enter the job type id to convert this inquiry into a job:\n${options}`, nonInquiryTypes[0].id);
+      if (!selectedType) return;
+      const jobType = nonInquiryTypes.find((type) => type.id === selectedType.trim());
+      if (!jobType) {
+        showToast('Invalid job type selected.');
+        return;
+      }
+      try {
+        const existingNotes = notesInput.value.trim();
+        const decisionNote = `Inquiry accepted at ${new Date().toISOString()} as ${jobType.name}.`;
+        const office_notes = [existingNotes, decisionNote].filter(Boolean).join('\n');
+        await updateJob(job.id, {
+          job_type_id: jobType.id,
+          status: JOB_STATUSES.OPEN,
+          office_notes,
+        });
+        showToast('Inquiry accepted and converted to job.');
+        close();
+        await refreshAfterUpdate();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  }
+
+  const rejectInquiryBtn = modal.querySelector('[data-action="reject-inquiry"]');
+  if (rejectInquiryBtn) {
+    rejectInquiryBtn.addEventListener('click', async () => {
+      const reason = prompt('Reason for rejecting this inquiry:');
+      if (!reason?.trim()) return;
+      try {
+        const existingNotes = notesInput.value.trim();
+        const decisionNote = `Inquiry rejected at ${new Date().toISOString()}: ${reason.trim()}`;
+        const office_notes = [existingNotes, decisionNote].filter(Boolean).join('\n');
+        await updateJob(job.id, {
+          office_notes,
+          status: JOB_STATUSES.CANCELED,
+        });
+        showToast('Inquiry rejected.');
+        close();
+        await refreshAfterUpdate();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  }
 
   const invoiceBtn = modal.querySelector('[data-action="invoice"]');
   if (invoiceBtn) {
@@ -5761,10 +5826,7 @@ function bindCreateJobModal() {
         description,
         status: JOB_STATUSES.OPEN,
       };
-       if (inquiryMode) {
-        payload.on_the_way_at = null;
-        payload.arrived_at = null;
-      }
+      
 
       const job = await createJob(payload);
 
