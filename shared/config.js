@@ -2,7 +2,6 @@ export const DEFAULT_CONFIG = {
   supabaseUrl: 'https://evdjfpzxirsuryawjtql.supabase.co',
   supabaseAnonKey: 'sb_publishable_DM1LTYa35ycFbloXyDofSw_PDDGKdrm',
   orgId: '11111111-1111-1111-1111-111111111111',
-  orgId: '',
 };
 
 function normalizeConfigValue(value) {
