@@ -38,6 +38,21 @@ function handleError(error, context) {
     throw new Error(`${context}: ${message}`);
   }
 }
+
+function payloadKeys(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  return Object.keys(payload).sort();
+}
+
+function logSupabaseOperation({ operation, table, payload }) {
+  const details = {
+    operation,
+    table,
+    payloadKeys: payloadKeys(payload),
+  };
+  console.debug('[db]', details);
+  return details;
+}
 async function checkJobStatusRpcSupport() {
   if (jobStatusRpcSupported !== undefined) return jobStatusRpcSupported;
  
@@ -54,40 +69,87 @@ async function checkJobStatusRpcSupport() {
 
 async function listTable(table) {
   const orgId = requireOrgId();
+  const context = logSupabaseOperation({ operation: 'select', table, payload: { org_id: orgId } });
   const { data, error } = await getClient()
     .from(table)
     .select('*')
     .eq('org_id', orgId)
     .order('created_at', { ascending: true });
-  handleError(error, `Load ${table}`);
+  handleError(error, `Load ${table} ${JSON.stringify(context)}`);
   return data || [];
 }
 
 async function insertTable(table, payload) {
   const orgId = requireOrgId();
+   const context = logSupabaseOperation({ operation: 'insert', table, payload: { ...payload, org_id: orgId } });
   const { data, error } = await getClient()
     .from(table)
     .insert({ ...payload, org_id: orgId })
     .select()
     .single();
-  handleError(error, `Create ${table}`);
+   handleError(error, `Create ${table} ${JSON.stringify(context)}`)
   return data;
 }
 
 async function updateTable(table, id, payload) {
+   const context = logSupabaseOperation({ operation: 'update', table, payload: { id, ...payload } });
   const { data, error } = await getClient()
     .from(table)
     .update(payload)
     .eq('id', id)
     .select()
     .single();
-  handleError(error, `Update ${table}`);
+  handleError(error, `Update ${table} ${JSON.stringify(context)}`);
   return data;
 }
 
 async function deleteTable(table, id) {
+  const context = logSupabaseOperation({ operation: 'delete', table, payload: { id } });
   const { error } = await getClient().from(table).delete().eq('id', id);
-  handleError(error, `Delete ${table}`);
+  handleError(error, `Delete ${table} ${JSON.stringify(context)}`);
+}
+
+export async function runSupabaseHealthCheck() {
+  const status = {
+    ok: false,
+    checks: {},
+    errors: [],
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    const orgId = requireOrgId();
+    const supabase = getClient();
+    status.checks.client = Boolean(supabase);
+
+    const checks = [
+      { key: 'jobs', table: 'jobs' },
+      { key: 'customers', table: 'customers' },
+      { key: 'fields', table: 'fields' },
+    ];
+
+    for (const check of checks) {
+      const context = logSupabaseOperation({ operation: 'health-check', table: check.table, payload: { org_id: orgId } });
+      const { error, data } = await supabase
+        .from(check.table)
+        .select('id')
+        .eq('org_id', orgId)
+        .limit(1);
+      if (error) {
+        status.checks[check.key] = { ok: false, context, message: error.message };
+        status.errors.push({ table: check.table, message: error.message });
+      } else {
+        status.checks[check.key] = { ok: true, rows: Array.isArray(data) ? data.length : 0 };
+      }
+    }
+
+    status.ok = status.errors.length === 0 && status.checks.client;
+  } catch (error) {
+    status.errors.push({ message: error.message || String(error) });
+  }
+
+  console.info('Supabase health check', status);
+  return status;
 }
 
 export async function getBootData() {

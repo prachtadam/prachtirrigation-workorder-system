@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pracht-tech-shell-v1';
+const CACHE_NAME = 'pracht-tech-shell-v2';
 const APP_SHELL = [
   '/tech/',
   '/tech/index.html',

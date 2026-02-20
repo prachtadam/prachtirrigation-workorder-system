@@ -41,6 +41,7 @@ import {
   signIn,
   signOut,
   getSession,
+  runSupabaseHealthCheck,
 } from '../shared/db.js';
 import { enqueueAction, processOutbox, saveLastScreen, getLastScreen, clearLastScreen } from '../shared/offline.js';
 import { JOB_STATUSES } from '../shared/types.js';
@@ -3119,15 +3120,14 @@ diagnosticEvent: (payload) => createDiagnosticRunEvent(payload),
     ]);
     const durations = await getJobStatusDurations(jobId);
     await generateAndUploadReports({ job, diagnostics, repairs, parts, durations });
-    await generateAndUplaodDiagnosticsReport(job);
+    await generateAndUploadDiagnosticsReport(job);
   },
 };
 
 window.addEventListener('online', syncOutbox);
 
 renderLogin();
-if (typeof window.renderLogin === 'function'){
-  window.renderLogin();
-  }else {
-    console.error('renderLogin is not available.');
-  }
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+  window.runSupabaseHealthCheck = runSupabaseHealthCheck;
+  console.info('Dev helper available: window.runSupabaseHealthCheck()');
+}

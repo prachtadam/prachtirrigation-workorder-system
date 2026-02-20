@@ -5679,6 +5679,19 @@ function bindNav() {
   });
 }
 
+
+
+function bindMenuDataTools() {
+  const exportBtn = document.getElementById('menu-export');
+  const importBtn = document.getElementById('menu-import');
+  if (exportBtn) {
+    exportBtn.addEventListener('click', () => showToast('Export from menu is not wired yet. Use page-level exports.'));
+  }
+  if (importBtn) {
+    importBtn.addEventListener('click', () => showToast('Import from menu is not wired yet. Use page-level imports.'));
+  }
+}
+
 function bindHamburgerMenuUI() {
   const modal = document.getElementById('menu-modal');
   const openBtn = document.getElementById('open-menu');
@@ -5724,15 +5737,15 @@ async function updateQuickViewCounts() {
     set('finished', counts.finished);
      set('closed', counts.closed);
     set('inquiries', counts.inquiries);
-  } catch(e) {}
+  } catch(e) { console.warn('Quick view job count refresh failed' , e); }
   try {
     const reqs = await listRequests();
     document.querySelectorAll('[data-count="requests"]').forEach(el=> el.textContent=String(reqs.length));
-  } catch(e) {}
+  } catch(e) {console.warn('Quick view job count refresh failed', e); }
   try {
     const oos = await listOutOfStock();
     document.querySelectorAll('[data-count="out_of_stock"]').forEach(el=> el.textContent=String(oos.length));
-  } catch(e) {}
+  } catch(e) {console.warn('Quick view job count refresh failed', e); }
 }
 
 function bindQuickViews() {
@@ -5852,6 +5865,7 @@ function bindCreateJobModal() {
 
 bindNav();
 bindHamburgerMenuUI();
+bindMenuDataTools();
 bindQuickViews();
 bindCreateJobShortcut();
 bindInventoryMapShortcut();
@@ -5859,3 +5873,8 @@ bindCreateInquiryShortcut();
 bindCreateJobModal();
 setView('job-board');
 updateQuickViewCounts();
+
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+  window.runSupabaseHealthCheck = runSupabaseHealthCheck;
+  console.info('Dev helper available: window.runSupabaseHealthCheck()');
+}
