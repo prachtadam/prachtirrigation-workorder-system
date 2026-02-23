@@ -18,6 +18,7 @@ function getClient() {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
   });
   return client;

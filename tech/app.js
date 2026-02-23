@@ -38,7 +38,7 @@ import {
   createDiagnosticRunEvent,
   listDiagnosticWorkflowRuns,
   uploadJobPhoto,
-  signIn,
+  getSupabaseClient,
   signOut,
   getSession,
   runSupabaseHealthCheck,
@@ -46,6 +46,7 @@ import {
 import { enqueueAction, processOutbox, saveLastScreen, getLastScreen, clearLastScreen } from '../shared/offline.js';
 import { JOB_STATUSES } from '../shared/types.js';
 import { generateAndUploadDiagnosticsReport, generateAndUploadReports } from '../shared/reports.js';
+import { getConfig } from '../shared/config.js';
 
 const app = document.getElementById('app');
 const toast = document.getElementById('toast');
@@ -719,15 +720,33 @@ async function updateBadgeCounts() {
   if (restockCount) restockCount.textContent = restock.length;
 }
 
+async function pinLogin({ username, pin }) {
+  const client = getSupabaseClient();
+  const { orgId } = getConfig();
+  if (!orgId) throw new Error('ORG_ID missing. Set ORG_ID in settings.');
+  const { data, error } = await client.functions.invoke('pin_login', {
+    body: { org_id: orgId, username, pin },
+  });
+  if (error) throw error;
+  if (!data?.access_token || !data?.refresh_token) {
+    throw new Error('Login failed. Missing session tokens.');
+  }
+  await client.auth.setSession({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+  });
+  return data;
+}
+
 function renderLogin() {
   const { container, panel } = createAppLayout({ withHeader: false });
   panel.innerHTML = `
     <div class="card">
       <h2>Tech Login</h2>
-      <label>Email</label>
-      <input id="login-email" type="email" placeholder="tech@example.com" />
-      <label>Password</label>
-      <input id="login-password" type="password" placeholder="Password" />
+      <label>Username</label>
+      <input id="login-username" type="text" placeholder="Username" autocomplete="username" />
+      <label>4-Digit PIN</label>
+      <input id="login-pin" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" placeholder="••••" autocomplete="current-password" />
       <button class="action" id="login-btn">Sign In</button>
       <button class="action secondary" id="offline-btn">Continue Offline</button>
     </div>
@@ -735,21 +754,25 @@ function renderLogin() {
   screenContainer(container);
 
   panel.querySelector('#login-btn').addEventListener('click', async () => {
-    const email = panel.querySelector('#login-email').value.trim();
-    const password = panel.querySelector('#login-password').value.trim();
-    if (!email || !password) {
-      showToast('Enter email and password.');
+    const username = panel.querySelector('#login-username').value.trim();
+    const pin = panel.querySelector('#login-pin').value.trim();
+    if (!username || !pin) {
+      showToast('Enter username and 4-digit PIN.');
+      return;
+    }
+    if (!/^\d{4}$/.test(pin)) {
+      showToast('PIN must be 4 digits.');
       return;
     }
     try {
-      await signIn(email, password);
+      await pinLogin({ username, pin });
       await initializeApp();
     } catch (error) {
       showToast(error.message);
     }
   });
 
- panel.querySelector('#offline-btn').addEventListener('click', async () => {
+  panel.querySelector('#offline-btn').addEventListener('click', async () => {
     if (!state.boot) await loadBoot();
     const lastTech = localStorage.getItem('TECH_USER_EMAIL');
     if (lastTech) {
@@ -774,9 +797,9 @@ async function handleLogout() {
   renderLogin();
 }
 
-async function initializeApp() {
+async function initializeApp(sessionOverride) {
   await loadBoot();
-  const session = await getSession();
+  const session = sessionOverride || await getSession();
   if (session?.user?.email) {
     state.tech = state.boot.users.find((user) => user.email === session.user.email) || null;
     localStorage.setItem('TECH_USER_EMAIL', session.user.email);
@@ -3126,7 +3149,34 @@ diagnosticEvent: (payload) => createDiagnosticRunEvent(payload),
 
 window.addEventListener('online', syncOutbox);
 
-renderLogin();
+const authClient = getSupabaseClient();
+authClient.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_OUT') {
+    stopInShopTimer();
+    state.tech = null;
+    renderLogin();
+    return;
+  }
+  if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session?.user) {
+    if (!state.boot) {
+      initializeApp(session);
+      return;
+    }
+    if (session.user.email) {
+      state.tech = state.boot.users.find((user) => user.email === session.user.email) || state.tech;
+      updateTechDisplay();
+    }
+  }
+});
+
+(async () => {
+  const session = await getSession();
+  if (session?.user) {
+    await initializeApp(session);
+  } else {
+    renderLogin();
+  }
+})();
 if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
   window.runSupabaseHealthCheck = runSupabaseHealthCheck;
   console.info('Dev helper available: window.runSupabaseHealthCheck()');

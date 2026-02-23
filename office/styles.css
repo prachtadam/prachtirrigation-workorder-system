@@ -32,6 +32,8 @@
   --primary: #22c55e;           /* create/add */
   --primary-2: #16a34a;
   --primary-ink: #062414;
+  --create-job: #059669;
+  --create-inquiry: #4F46E5;
 
   --info: #60a5fa;
   --violet: #a78bfa;
@@ -40,10 +42,14 @@
   --success: #22c55e;
   --warning: #f59e0b;
   --danger:  #ef4444;
-  --paused:  #fb7185;           /* slightly softer red */
-  --open:    #22c55e;
-  --progress:#f59e0b;
-  --closed:  #94a3b8;
+  --paused:  #F59E0B;
+  --open:    #2563EB;
+  --progress:#16A34A;
+  --finished:#0EA5E9;
+  --closed:  #374151;
+  --inquiries:#7C3AED;
+  --requests:#9333EA;
+  --oos: #DC2626;
 
   /* Pills */
   --pill: rgba(255,255,255,.06);
@@ -283,27 +289,27 @@ strong{ font-weight: 900; letter-spacing: .2px; }
 
 /* Hamburger */
 .hamburger{
-  width: 64px;
-  height: 64px;
+  width: 112px;
+  height: 112px;
   display:inline-flex;
   align-items:center;
   justify-content:center;
   border-radius: var(--r-12);
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,.05);
+  border: none;
+  background: transparent;
   cursor: pointer;
-  box-shadow: var(--shadow-xs);
+  box-shadow: none;
 }
 
 .hamburger:hover{
-  background: rgba(255,255,255,.07);
-  border-color: var(--border-2);
+  background: transparent;
+  border-color: transparent;
 }
 
 .hamburger-logo{
-  width: 56px;
-  height: 56px;
-  border-radius: var(--r-8);
+  width: 112px;
+  height: 112px;
+  border-radius: 0;
   object-fit: cover;
 }
 
@@ -491,11 +497,12 @@ min-width: 0;
 /* Make the "+ Create Job" / "+ New" pills feel like primary actions */
 .list > .pill:first-child{
   border-radius: var(--r-999);
-  background: linear-gradient(180deg, rgba(34,197,94,.18), rgba(34,197,94,.10));
-  border-color: rgba(34,197,94,.35);
+  background: var(--create-job);
+  border-color: var(--create-job);
+  color: #fff;
 }
 .list > .pill:first-child:hover{
-  background: linear-gradient(180deg, rgba(34,197,94,.24), rgba(34,197,94,.12));
+  filter: brightness(1.06);
 }
 
 /* -----------------------------
@@ -640,6 +647,18 @@ button.action{
   box-shadow: 0 18px 40px rgba(34,197,94,.22);
 }
 
+#create-job-btn{
+  background: var(--create-job);
+  color: #fff;
+  box-shadow: 0 18px 40px rgba(5,150,105,.24);
+}
+
+#create-inquiry-btn{
+  background: var(--create-inquiry);
+  color: #fff;
+  box-shadow: 0 18px 40px rgba(79,70,229,.24);
+}
+
 button.action:hover{ filter: brightness(1.04); }
 button.action:active{ transform: translateY(1px); }
 button.action:focus-visible{ box-shadow: var(--ring), 0 18px 40px rgba(34,197,94,.22); }
@@ -730,9 +749,9 @@ button.danger:focus-visible{
   margin-right: 6px;
 }
 
-.map-preview .legend-open{ background: #22c55e; }
-.map-preview .legend-paused{ background: #f97316; }
-.map-preview .legend-progress{ background: #3b82f6; }
+.map-preview .legend-open{ background: var(--open); }
+.map-preview .legend-paused{ background: var(--paused); }
+.map-preview .legend-progress{ background: var(--progress); }
 
 .map-frame{
   position: relative;
@@ -1069,18 +1088,26 @@ button.action.wide{
 }
 
 /* Full-pill tint per status (matches screenshot intent) */
-.status-open{ background: linear-gradient(180deg, rgba(34,197,94,.18), rgba(34,197,94,.08)) !important; border-color: rgba(34,197,94,.26) !important; }
-.status-paused{ background: linear-gradient(180deg, rgba(251,113,133,.18), rgba(251,113,133,.08)) !important; border-color: rgba(251,113,133,.26) !important; }
-.status-progress{ background: linear-gradient(180deg, rgba(245,158,11,.18), rgba(245,158,11,.08)) !important; border-color: rgba(245,158,11,.26) !important; }
-.status-closed{ background: linear-gradient(180deg, rgba(148,163,184,.16), rgba(148,163,184,.06)) !important; border-color: rgba(148,163,184,.22) !important; }
+.status-open{ background: var(--open) !important; border-color: var(--open) !important; color: #fff; }
+.status-paused{ background: var(--paused) !important; border-color: var(--paused) !important; color: #fff; }
+.status-progress{ background: var(--progress) !important; border-color: var(--progress) !important; color: #fff; }
+.status-finished{ background: var(--finished) !important; border-color: var(--finished) !important; color: #fff; }
+.status-closed{ background: var(--closed) !important; border-color: var(--closed) !important; color: #fff; }
+.status-inquiries{ background: var(--inquiries) !important; border-color: var(--inquiries) !important; color: #fff; }
+.status-requests{ background: var(--requests) !important; border-color: var(--requests) !important; color: #fff; }
+.status-oos{ background: var(--oos) !important; border-color: var(--oos) !important; color: #fff; }
 .status-warning{ background: linear-gradient(180deg, rgba(251,191,36,.16), rgba(251,191,36,.06)) !important; border-color: rgba(251,191,36,.22) !important; }
 .status-danger{ background: linear-gradient(180deg, rgba(239,68,68,.16), rgba(239,68,68,.06)) !important; border-color: rgba(239,68,68,.22) !important; }
 
-.dot.open{ background: #22c55e; }
-.dot.paused{ background: #fb7185; }
-.dot.progress{ background: #f59e0b; }
-.dot.closed{ background: #94a3b8; }
-.dot.neutral{ background: #94a3b8; }
+.dot.open{ background: var(--open); }
+.dot.paused{ background: var(--paused); }
+.dot.progress{ background: var(--progress); }
+.dot.finished{ background: var(--finished); }
+.dot.closed{ background: var(--closed); }
+.dot.inquiries{ background: var(--inquiries); }
+.dot.requests{ background: var(--requests); }
+.dot.oos{ background: var(--oos); }
+.dot.neutral{ background: var(--closed); }
 .dot.warning{ background: #fbbf24; }
 .dot.danger{ background: #ef4444; }
 
@@ -1132,17 +1159,6 @@ button.action.wide{
   font-size: 12px;
   margin-top: 8px;
 }
-.status-paused{ background: linear-gradient(180deg, rgba(249,115,22,.18), rgba(249,115,22,.08)) !important; border-color: rgba(249,115,22,.26) !important; }
-.status-progress{ background: linear-gradient(180deg, rgba(59,130,246,.18), rgba(59,130,246,.08)) !important; border-color: rgba(59,130,246,.26) !important; }
-.status-finished{ background: linear-gradient(180deg, rgba(168,85,247,.18), rgba(168,85,247,.08)) !important; border-color: rgba(168,85,247,.26) !important; }
-.status-requests{ background: linear-gradient(180deg, rgba(20,184,166,.18), rgba(20,184,166,.08)) !important; border-color: rgba(20,184,166,.26) !important; }
-.status-oos{ background: linear-gradient(180deg, rgba(239,68,68,.18), rgba(239,68,68,.08)) !important; border-color: rgba(239,68,68,.26) !important; }
-
-.dot.paused{ background:#f97316; }
-.dot.progress{ background:#3b82f6; }
-.dot.finished{ background:#a855f7; }
-.dot.requests{ background:#14b8a6; }
-.dot.oos{ background:#ef4444; }
 
 /* Modal */
 .modal{

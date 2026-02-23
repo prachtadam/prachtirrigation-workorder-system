@@ -868,15 +868,6 @@ async function renderJobBoardList(filterId) {
   });
   listPanel.appendChild(createButton);
 
-const createInquiryButton = document.createElement('button');
-  createInquiryButton.className = 'pill secondary';
-  createInquiryButton.textContent = '+ Create Inquiry';
-  createInquiryButton.addEventListener('click', () => {
-    state.createJobMode = 'inquiry';
-    openCreateJobModal();
-  });
-  listPanel.appendChild(createInquiryButton);
-
   const filterMap = {
     open: { statuses: [JOB_STATUSES.PAUSED, JOB_STATUSES.OPEN] },
     in_progress: { statuses: [JOB_STATUSES.ON_SITE_REPAIR, JOB_STATUSES.ON_SITE_DIAGNOSTICS, JOB_STATUSES.ON_THE_WAY, JOB_STATUSES.PAUSED] },
@@ -968,18 +959,39 @@ const createInquiryButton = document.createElement('button');
 }
 
 const mapState = {
- map: null,
- markersLayer: null,
+  map: null,
+  markers: [],
+  infoWindow: null,
+  googleMapsReady: null,
 };
 
+function getGoogleMapsApiKey() {
+  return getConfig().googleMapsApiKey || '';
+}
 
+function loadGoogleMapsApi() {
+  if (window.google?.maps) return Promise.resolve();
+  if (mapState.googleMapsReady) return mapState.googleMapsReady;
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) return Promise.reject(new Error('Map key not set.'));
+  mapState.googleMapsReady = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Unable to load Google Maps.'));
+    document.head.appendChild(script);
+  });
+  return mapState.googleMapsReady;
+}
 
 function mapStatusColor(status = '') {
   const normalized = status.toLowerCase();
-  if (normalized.includes('paused')) return '#f97316';
-  if (normalized.includes('on_the_way') || normalized.includes('on_site') || normalized.includes('progress')) return '#3b82f6';
-  if (normalized.includes('open')) return '#22c55e';
-  return '#94a3b8';
+  if (normalized.includes('paused')) return '#F59E0B';
+  if (normalized.includes('on_the_way') || normalized.includes('on_site') || normalized.includes('progress')) return '#16A34A';
+  if (normalized.includes('open')) return '#2563EB';
+  return '#374151';
 }
 
 function getJobCoords(job) {
@@ -989,7 +1001,7 @@ function getJobCoords(job) {
   return { lat, lng: lon };
 }
 
-function buildLeafletMarkerIcon(color) {
+function buildGoogleMarkerIcon(color) {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="34" height="44" viewBox="0 0 34 44" fill="none">
       <path d="M17 1C9.28 1 3 7.28 3 15c0 9.5 14 27.5 14 27.5S31 24.5 31 15C31 7.28 24.72 1 17 1Z" fill="${color}" stroke="#0f172a" stroke-width="1.2"/>
@@ -998,13 +1010,11 @@ function buildLeafletMarkerIcon(color) {
       <circle cx="17" cy="15" r="2.6" fill="#e2e8f0"/>
     </svg>
   `;
-  return window.L.divIcon({
-    className: 'job-pin',
-    html: svg,
-    iconSize: [34, 44],
-    iconAnchor: [17, 44],
-    popupAnchor: [0, -40],
-  })
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: new google.maps.Size(34, 44),
+    anchor: new google.maps.Point(17, 44),
+  };
 }
 
 
@@ -1018,49 +1028,74 @@ async function renderJobMap(mapPanel, jobs, filterId) {
     .map((job) => ({ job, coords: getJobCoords(job) }))
     .filter(({ coords }) => coords);
 
-  
-  if (!coordsJobs.length) {
-    mapOverlay.textContent = 'No active jobs with field coordinates to display.';
+  const apiKey = getGoogleMapsApiKey();
+  if (!apiKey) {
+    mapOverlay.textContent = 'Map key not set.';
+    mapOverlay.hidden = false;
     return;
   }
-    if (!window.L){
-    mapOverlay.textContent = 'Map preview required Leaflet to load.';
+
+  if (!coordsJobs.length) {
+    mapOverlay.textContent = 'No active jobs with field coordinates to display.';
+    mapOverlay.hidden = false;
+    return;
+  }
+
+  mapOverlay.textContent = 'Loading map preview…';
+  mapOverlay.hidden = false;
+
+  try {
+    await loadGoogleMapsApi();
+  } catch (error) {
+    mapOverlay.textContent = error.message || 'Unable to load Google Maps.';
+    mapOverlay.hidden = false;
     return;
   }
 
   mapOverlay.hidden = true;
 
   if (mapState.map) {
-    mapState.map.remove();
     mapState.map = null;
+    mapState.markers = [];
+    mapState.infoWindow = null;
   }
-  const map = window.L.map(mapCanvas, {
-      zoomControl: true,
-      attributionControl: true,
+
+  const map = new google.maps.Map(mapCanvas, {
+    mapTypeId: 'satellite',
+    zoomControl: true,
+    fullscreenControl: false,
+    streetViewControl: false,
+    mapTypeControl: false,
   });
-      mapState.map = map;
+  mapState.map = map;
+  mapState.infoWindow = new google.maps.InfoWindow();
 
-      window.L.tileLayer(
-         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        {
-          attribution: 'Tiles @ Esri',
-          maxZoom: 19,
-        },
-      ).addTo(map);
+  const bounds = new google.maps.LatLngBounds();
+  coordsJobs.forEach(({ coords }) => bounds.extend(coords));
+  map.fitBounds(bounds, 40);
 
-      const bounds = window.L.latLngBounds(coordsJobs.map(({ coords }) => coords));
-      map.fitBounds(bounds.pad(0.2));
-      
+  let ignoreNextMapClick = false;
+  map.addListener('click', (event) => {
+    if (ignoreNextMapClick) {
+      ignoreNextMapClick = false;
+      return;
+    }
+    if (!event?.latLng) return;
+    const lat = event.latLng.lat();
+    const lng = event.latLng.lng();
+    const zoom = map.getZoom() || 15;
+    const url = `https://www.google.com/maps/@${lat},${lng},${zoom}z`;
+    window.open(url, '_blank', 'noopener');
+  });
 
-const markersLayer = window.L.layerGroup().addTo(map);
-  mapState.markersLayer = markersLayer;
-     coordsJobs.forEach(({ job, coords }) => {
-        const marker = window.L.marker(coords, {
-          title: job.customers?.name || 'Job',
-           icon: buildLeafletMarkerIcon(mapStatusColor(job.status)),
+  coordsJobs.forEach(({ job, coords }) => {
+    const marker = new google.maps.Marker({
+      position: coords,
+      map,
+      title: job.customers?.name || 'Job',
+      icon: buildGoogleMarkerIcon(mapStatusColor(job.status)),
     });
-
-    marker.addTo(markersLayer);
+    mapState.markers.push(marker);
 
     const content = document.createElement('div');
     content.className = 'map-info';
@@ -1075,11 +1110,17 @@ const markersLayer = window.L.layerGroup().addTo(map);
     openBtn.textContent = 'Open Job';
     openBtn.addEventListener('click', (event) => {
       event.preventDefault();
-      map.closePopup();
+      mapState.infoWindow?.close();
       openJobDetailModal(job, filterId);
     });
-     content.appendChild(openBtn);
-    marker.bindPopup(content, { closeButton: true, autoPan: true });
+    content.appendChild(openBtn);
+
+    marker.addListener('click', () => {
+      ignoreNextMapClick = true;
+      mapState.infoWindow?.setContent(content);
+      mapState.infoWindow?.open(map, marker);
+      setTimeout(() => { ignoreNextMapClick = false; }, 0);
+    });
   });
 }
 
@@ -1548,27 +1589,208 @@ async function renderListView({
   viewContainer.innerHTML = '';
   viewContainer.appendChild(layout);
 }
+
+async function invokeAdminFunction(fnName, payload) {
+  const client = getSupabaseClient();
+  const { data, error } = await client.functions.invoke(fnName, { body: payload });
+  if (error) throw error;
+  return data;
+}
+
+async function listUserLogins() {
+  const { orgId } = getConfig();
+  if (!orgId) throw new Error('ORG_ID missing. Please set ORG_ID in settings.');
+  const result = await invokeAdminFunction('admin_list_users', { org_id: orgId });
+  return result?.users || [];
+}
 async function renderUsersView() {
   viewTitle.textContent = 'Users';
-  viewSubtitle.textContent = 'Manage tech and helper users.';
+  viewSubtitle.textContent = 'Manage login access and user profiles.';
   viewActions.innerHTML = '';
 
-  const addBtn = document.createElement('button');
-  addBtn.className = 'action';
-  addBtn.type = 'button';
-  addBtn.textContent = 'Add User';
-  viewActions.appendChild(addBtn);
+  const addLoginBtn = document.createElement('button');
+  addLoginBtn.className = 'action';
+  addLoginBtn.type = 'button';
+  addLoginBtn.textContent = 'Add Login';
+  const addUserBtn = document.createElement('button');
+  addUserBtn.className = 'secondary';
+  addUserBtn.type = 'button';
+  addUserBtn.textContent = 'Add User Profile';
+  viewActions.append(addLoginBtn, addUserBtn);
 
-  const users = await listUsers();
+  const [users, loginUsers] = await Promise.all([
+    listUsers(),
+    listUserLogins().catch((error) => {
+      showToast(error.message || 'Unable to load login users.');
+      return [];
+    }),
+  ]);
 
-  const listCard = document.createElement('div');
-  listCard.className = 'card list';
+  const loginCard = document.createElement('div');
+  loginCard.className = 'card list';
+  loginCard.innerHTML = '<h3>Login Accounts</h3>';
 
   const roleOptions = [
     { value: 'admin', label: 'Admin' },
     { value: 'helper', label: 'Helper' },
     { value: 'tech', label: 'Tech' },
   ];
+
+  const openLoginModal = () => {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = `
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Add Login">
+        <div class="modal-head">
+          <div class="modal-title">Add Login</div>
+          <div class="modal-actions">
+            <button class="pill tiny" type="button" data-close>Close</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <form class="form-grid" id="login-form"></form>
+        </div>
+        <div class="modal-foot">
+          <button class="secondary" type="button" data-cancel>Cancel</button>
+          <button class="action" type="button" data-save>Create</button>
+        </div>
+      </div>
+      <button class="modal-scrim" aria-label="Close"></button>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    modal.querySelector('[data-close]').addEventListener('click', close);
+    modal.querySelector('.modal-scrim').addEventListener('click', close);
+
+    const form = modal.querySelector('#login-form');
+    const fields = [
+      { key: 'username', label: 'Username' },
+      { key: 'pin', label: '4-Digit PIN', type: 'password' },
+      { key: 'role', label: 'Role', type: 'select' },
+    ];
+    const inputs = {};
+    fields.forEach((field) => {
+      const wrap = document.createElement('div');
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      let input;
+      if (field.type === 'select') {
+        input = document.createElement('select');
+        roleOptions.forEach((option) => {
+          const opt = document.createElement('option');
+          opt.value = option.value;
+          opt.textContent = option.label;
+          input.appendChild(opt);
+        });
+      } else {
+        input = document.createElement('input');
+        if (field.type === 'password') {
+          input.type = 'password';
+          input.inputMode = 'numeric';
+          input.maxLength = 4;
+          input.placeholder = '••••';
+        }
+      }
+      input.name = field.key;
+      inputs[field.key] = input;
+      wrap.append(label, input);
+      form.appendChild(wrap);
+    });
+
+    modal.querySelector('[data-cancel]').addEventListener('click', () => {
+      form.reset();
+      close();
+    });
+
+    modal.querySelector('[data-save]').addEventListener('click', async () => {
+      const username = inputs.username.value.trim();
+      const pin = inputs.pin.value.trim();
+      const role = inputs.role.value;
+      const { orgId } = getConfig();
+      if (!username) return showToast('Username is required.');
+      if (!/^\d{4}$/.test(pin)) return showToast('PIN must be 4 digits.');
+      if (!orgId) return showToast('ORG_ID missing. Please set ORG_ID in settings.');
+      try {
+        const result = await invokeAdminFunction('admin_create_user', {
+          org_id: orgId,
+          username,
+          pin,
+          role,
+        });
+        if (result?.email && !users.find((user) => user.email === result.email)) {
+          await createUser({ full_name: username, role, email: result.email });
+        }
+        await refreshBoot();
+        close();
+        await renderUsersView();
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
+  };
+
+  const handleResetPin = async (login) => {
+    const newPin = prompt(`Enter a new 4-digit PIN for ${login.username}:`);
+    if (!newPin) return;
+    if (!/^\d{4}$/.test(newPin.trim())) {
+      showToast('PIN must be 4 digits.');
+      return;
+    }
+    try {
+      await invokeAdminFunction('admin_reset_pin', {
+        org_id: login.org_id,
+        auth_user_id: login.auth_user_id,
+        new_pin: newPin.trim(),
+      });
+      showToast('PIN reset.');
+      await renderUsersView();
+    } catch (error) {
+      showToast(error.message);
+    }
+  };
+
+  const handleToggleActive = async (login) => {
+    try {
+      await invokeAdminFunction('admin_disable_user', {
+        org_id: login.org_id,
+        auth_user_id: login.auth_user_id,
+        is_active: !login.is_active,
+      });
+      showToast(login.is_active ? 'User disabled.' : 'User enabled.');
+      await renderUsersView();
+    } catch (error) {
+      showToast(error.message);
+    }
+  };
+
+  loginUsers.forEach((login) => {
+    const pill = document.createElement('div');
+    pill.className = 'pill list-row';
+    const roleLabel = roleOptions.find((option) => option.value === login.role)?.label || login.role || '';
+    const lastLogin = login.last_login_at ? new Date(login.last_login_at).toLocaleString() : 'Never';
+    pill.innerHTML = `
+      <div class="row-main">
+        <div class="row-title">${escapeHtml(login.username || 'User')}</div>
+        <div class="row-sub muted">${[roleLabel, login.is_active ? 'Active' : 'Disabled', `Last login: ${lastLogin}`].filter(Boolean).join(' • ')}</div>
+      </div>
+      <div class="row-meta">
+        <button class="pill tiny secondary" type="button" data-reset>Reset PIN</button>
+        <button class="pill tiny" type="button" data-toggle>${login.is_active ? 'Disable' : 'Enable'}</button>
+      </div>
+    `;
+    pill.querySelector('[data-reset]').addEventListener('click', () => handleResetPin(login));
+    pill.querySelector('[data-toggle]').addEventListener('click', () => handleToggleActive(login));
+    loginCard.appendChild(pill);
+  });
+
+  if (!loginUsers.length) {
+    loginCard.innerHTML += '<p>No login accounts yet.</p>';
+  }
+
+  const listCard = document.createElement('div');
+  listCard.className = 'card list';
+  listCard.innerHTML = '<h3>User Profiles</h3>';
 
   const openUserModal = ({ user } = {}) => {
     const modal = document.createElement('div');
@@ -1685,7 +1907,8 @@ async function renderUsersView() {
     }
   };
 
-  addBtn.addEventListener('click', () => openUserModal());
+  addUserBtn.addEventListener('click', () => openUserModal());
+  addLoginBtn.addEventListener('click', () => openLoginModal());
 
   users.forEach((user) => {
     const pill = document.createElement('button');
@@ -1707,7 +1930,10 @@ async function renderUsersView() {
   }
 
   viewContainer.innerHTML = '';
-  viewContainer.appendChild(listCard);
+  const stack = document.createElement('div');
+  stack.className = 'section-stack';
+  stack.append(loginCard, listCard);
+  viewContainer.appendChild(stack);
 }
 async function renderJobTypesView() {
   viewTitle.textContent = 'Job Types';
@@ -2422,6 +2648,14 @@ async function renderToolsView() {
         <input name="name" value="${tool?.name || ''}" />
       </div>
       <div>
+        <label>Vendor</label>
+        <input name="vendor" value="${tool?.vendor || ''}" />
+      </div>
+      <div>
+        <label>Item Number</label>
+        <input name="item_number" value="${tool?.item_number || ''}" />
+      </div>
+      <div>
         <label>Description</label>
         <textarea name="description">${tool?.description || ''}</textarea>
       </div>
@@ -2434,6 +2668,8 @@ async function renderToolsView() {
       event.preventDefault();
       const payload = {
         name: form.elements.name.value.trim(),
+        vendor: form.elements.vendor.value.trim(),
+        item_number: form.elements.item_number.value.trim(),
         description: form.elements.description.value.trim(),
       };
       try {
@@ -3860,6 +4096,7 @@ async function renderTruckListView(truck, listType) {
   const items = isInventory ? await listTruckInventory(truckId) : await listTruckTools(truckId);
 
   const toolNameMap = new Map(state.boot?.tools?.map((tool) => [tool.name, tool]) || []);
+  const toolIdMap = new Map(state.boot?.tools?.map((tool) => [tool.id, tool]) || []);
   const draft = isInventory ? [] : items.map((item) => ({
     id: item.id,
     product_id: item.product_id,
@@ -4126,8 +4363,8 @@ async function renderTruckListView(truck, listType) {
       return;
     }
 
-    const label = document.createElement('label');
-  label.textContent = 'Tool';
+    const existingLabel = document.createElement('label');
+    existingLabel.textContent = 'Select Existing Tool';
     primaryInput = document.createElement('select');
     const placeholderOption = document.createElement('option');
     placeholderOption.value = '';
@@ -4139,32 +4376,110 @@ async function renderTruckListView(truck, listType) {
       option.textContent = tool.name;
       primaryInput.appendChild(option);
     });
+
+    const newHint = document.createElement('div');
+    newHint.className = 'muted';
+    newHint.textContent = 'Or create a new tool';
+
+    const newNameLabel = document.createElement('label');
+    newNameLabel.textContent = 'Tool Name (new)';
+    const newNameInput = document.createElement('input');
+    newNameInput.type = 'text';
+
+    const vendorLabel = document.createElement('label');
+    vendorLabel.textContent = 'Vendor (optional)';
+    const vendorInput = document.createElement('input');
+    vendorInput.type = 'text';
+
+    const itemLabel = document.createElement('label');
+    itemLabel.textContent = 'Item Number (optional)';
+    const itemInput = document.createElement('input');
+    itemInput.type = 'text';
+
     const qtyLabel = document.createElement('label');
     qtyLabel.textContent = 'Quantity';
     qtyInput = document.createElement('input');
     qtyInput.type = 'number';
     qtyInput.min = '0';
-    const wrap = document.createElement('div');
-    wrap.append(label, primaryInput);
+
+    const existingWrap = document.createElement('div');
+    existingWrap.append(existingLabel, primaryInput);
+    const newNameWrap = document.createElement('div');
+    newNameWrap.append(newNameLabel, newNameInput);
+    const vendorWrap = document.createElement('div');
+    vendorWrap.append(vendorLabel, vendorInput);
+    const itemWrap = document.createElement('div');
+    itemWrap.append(itemLabel, itemInput);
     const qtyWrap = document.createElement('div');
     qtyWrap.append(qtyLabel, qtyInput);
-    form.append(wrap, qtyWrap);
+
+    form.append(existingWrap, newHint, newNameWrap, vendorWrap, itemWrap, qtyWrap);
     body.append(form, foot);
     const { close } = openModalSimple({ title: 'Add Tool', bodyEl: body });
     cancel.addEventListener('click', () => close());
-    save.addEventListener('click', () => {
-       const toolId = primaryInput.value;
-      const tool = toolIdMap.get(toolId);
+    save.addEventListener('click', async () => {
+      const toolId = primaryInput.value;
+      const newName = newNameInput.value.trim();
       const qty = Number(qtyInput.value || 0);
-     if (!toolId) return showToast('Tool selection is required.');
-      if (!tool) return showToast('Select a valid tool.');
       if (!qty) return showToast('Quantity is required.');
-       draft.push({ tool_id: tool.id, tool_name: tool.name, name: tool.name, qty });
-      if (existing) {
-        existing.qty += qty;
+
+      let tool = null;
+      if (newName) {
+        try {
+          tool = await createTool({
+            name: newName,
+            vendor: vendorInput.value.trim(),
+            item_number: itemInput.value.trim(),
+          });
+          state.boot.tools.push(tool);
+          toolIdMap.set(tool.id, tool);
+          toolNameMap.set(tool.name, tool);
+          const option = document.createElement('option');
+          option.value = tool.id;
+          option.textContent = tool.name;
+          primaryInput.appendChild(option);
+        } catch (error) {
+          showToast(error.message);
+          return;
+        }
       } else {
-        draft.push({ tool_name: name, name, qty });
+        if (!toolId) return showToast('Tool selection is required.');
+        tool = toolIdMap.get(toolId);
       }
+
+      if (!tool) return showToast('Select a valid tool.');
+
+      const existingItem = draft.find((item) => item.tool_id === tool.id);
+      try {
+        if (existingItem?.id) {
+          const nextQty = Number(existingItem.qty || 0) + qty;
+          await updateTruckTool(existingItem.id, {
+            tool_id: tool.id,
+            tool_name: tool.name,
+            qty: nextQty,
+            truck_id: truckId,
+          });
+          existingItem.qty = nextQty;
+        } else {
+          const inserted = await addTruckTool({
+            truck_id: truckId,
+            tool_id: tool.id,
+            tool_name: tool.name,
+            qty,
+          });
+          draft.push({
+            id: inserted?.id,
+            tool_id: tool.id,
+            tool_name: tool.name,
+            name: tool.name,
+            qty,
+          });
+        }
+      } catch (error) {
+        showToast(error.message);
+        return;
+      }
+
       close();
       renderDraft();
     });

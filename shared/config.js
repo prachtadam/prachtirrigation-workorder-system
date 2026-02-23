@@ -36,12 +36,13 @@ export function getConfig() {
   };
 
   const fromStorage = {
-     supabaseUrl: safeGetItem('SUPABASE_URL'),
+    supabaseUrl: safeGetItem('SUPABASE_URL'),
     supabaseAnonKey: safeGetItem('SUPABASE_ANON_KEY'),
     orgId: safeGetItem('ORG_ID'),
+    googleMapsApiKey: safeGetItem('GOOGLE_MAPS_API_KEY'),
   };
 
- let supabaseUrl = normalizeConfigValue(fromEnv.supabaseUrl)
+  let supabaseUrl = normalizeConfigValue(fromEnv.supabaseUrl)
     || normalizeConfigValue(fromStorage.supabaseUrl)
     || DEFAULT_CONFIG.supabaseUrl
     || '';
@@ -53,6 +54,9 @@ export function getConfig() {
     || normalizeConfigValue(fromStorage.orgId)
     || DEFAULT_CONFIG.orgId
     || '';
+  let googleMapsApiKey = normalizeConfigValue(fromEnv.googleMapsApiKey)
+    || normalizeConfigValue(fromStorage.googleMapsApiKey)
+    || '';
 
   if (supabaseUrl) {
     safeSetItem('SUPABASE_URL', supabaseUrl);
@@ -63,11 +67,15 @@ export function getConfig() {
   if (orgId) {
     safeSetItem('ORG_ID', orgId);
   }
+  if (googleMapsApiKey) {
+    safeSetItem('GOOGLE_MAPS_API_KEY', googleMapsApiKey);
+  }
 
   return {
     supabaseUrl,
     supabaseAnonKey,
     orgId,
+    googleMapsApiKey,
   };
 }
 
@@ -81,7 +89,7 @@ export function saveConfig({ supabaseUrl, supabaseAnonKey, orgId, googleMapsApiK
   if (orgId) {
     safeSetItem('ORG_ID', orgId);
   }
-   if (googleMapsApiKey) {
+  if (googleMapsApiKey !== undefined) {
     safeSetItem('GOOGLE_MAPS_API_KEY', googleMapsApiKey);
   }
 }
